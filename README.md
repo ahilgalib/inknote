@@ -3,7 +3,7 @@
 **Free, open-source handwritten notes for iPad + Apple Pencil, phones and desktop.**
 A Notability-style note app that runs in the browser, installs to your home screen, and works fully offline. No account, no server: your notes stay on your device.
 
-**Live app:** https://inkwell-notes.pages.dev
+**Live app:** https://inkwell-notes.mahilgalib.workers.dev
 
 ![Inkwell icon](icons/icon-192.png)
 
@@ -62,7 +62,7 @@ Then open http://localhost:8801. To try it on your iPad, open `http://<your-comp
 
 Any static host works. The repo root is the site.
 
-- **Cloudflare Pages:** `npx wrangler pages deploy . --project-name your-name`
+- **Cloudflare:** `npx wrangler pages deploy . --project-name your-name` (or Workers static assets)
 - **GitHub Pages:** Settings → Pages → deploy from branch `main`, folder `/`
 - **Netlify / Vercel:** import the repo, no build command, output directory `.`
 

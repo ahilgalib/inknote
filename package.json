@@ -6,7 +6,6 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "start": "node dev-server.mjs",
-    "deploy": "npx wrangler pages deploy . --project-name inkwell-notes"
+    "start": "node dev-server.mjs"
   }
 }
