@@ -7,7 +7,7 @@ import { createNote, deleteNote, duplicateNote, exportNoteFile, exportBackup, im
 import { menu, popover, promptDialog, confirmDialog, progressDialog, closePopover } from './ui.js';
 
 const SUBJECT_COLORS = ['#e5484d', '#f76b15', '#f5b400', '#30a46c', '#0090ff', '#6e56cf', '#d6409f', '#7c8088'];
-const REPO = 'https://github.com/ahilgalib/inkwell';
+const REPO = 'https://github.com/ahilgalib/inkwell-notes';
 
 export class Library {
   constructor({ openNote }) {
