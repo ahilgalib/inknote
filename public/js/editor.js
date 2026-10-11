@@ -127,18 +127,29 @@ export class Editor {
     this.lctx = this.liveCv.getContext('2d');
     this.textarea = h('textarea', { class: 'text-edit', hidden: true, spellcheck: 'true', autocapitalize: 'sentences' });
     this.textarea.addEventListener('input', () => this.sizeTextarea());
-    this.textarea.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== this.textarea && !this.gripping) this.commitText(); }, 120));
+    // keep editing while the format bar or one of its pop-ups is being used
+    this.textarea.addEventListener('blur', () => setTimeout(() => {
+      const a = document.activeElement;
+      if (a === this.textarea || this.gripping || (a && a.closest && a.closest('.pop-wrap, .text-bar'))) return;
+      this.commitText();
+    }, 120));
     this.textarea.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.textarea.blur(); e.stopPropagation(); });
     this.selMenu = h('div', { class: 'sel-menu', hidden: true });
     // grips on the text box being edited: drag to move it, drag the side to change its width
     this.textGrip = h('div', { class: 'text-grip', hidden: true, title: 'Drag to move', html: icons.move });
     this.textWidthGrip = h('div', { class: 'text-wgrip', hidden: true, title: 'Drag to resize' });
     this.bindTextGrip(this.textGrip, 'move');
+    // Format bar shown above a text box while you type (font, size, B/I/U, align, colour)
+    this.textBar = h('div', { class: 'text-bar', hidden: true });
+    this.textBar.addEventListener('pointerdown', (e) => { if (!e.target.closest('input')) e.preventDefault(); this.gripping = true; });
+    const release = () => setTimeout(() => { this.gripping = false; }, 150);
+    this.textBar.addEventListener('pointerup', release);
+    this.textBar.addEventListener('pointercancel', release);
     this.bindTextGrip(this.textWidthGrip, 'width');
     this.pageInd = h('div', { class: 'page-ind' });
     this.addTile = h('button', { class: 'add-tile', hidden: true, onClick: () => this.addPage(this.pages.length - 1) }, h('span', { html: icons.plus }), 'Add page');
     this.focusExit = h('button', { class: 'focus-exit', title: 'Exit full screen', 'aria-label': 'Exit full screen', html: icons.shrink, onClick: () => this.toggleFocus() });
-    this.stage = h('div', { class: 'stage' }, this.main, this.liveCv, this.textarea, this.textGrip, this.textWidthGrip, this.selMenu, this.pageInd, this.addTile, this.focusExit);
+    this.stage = h('div', { class: 'stage' }, this.main, this.liveCv, this.textarea, this.textGrip, this.textWidthGrip, this.textBar, this.selMenu, this.pageInd, this.addTile, this.focusExit);
 
     this.audioBar = h('div', { class: 'audio-bar', hidden: true });
     this.pagesPanel = h('aside', { class: 'pages-panel', hidden: true });
@@ -1478,6 +1489,8 @@ export class Editor {
       const closed = items.filter((i) => i.type === 'stroke' && i.closed);
       m.append(...[
         one && one.type === 'text' ? b('text', 'Edit', () => { const o = this.selection.o; this.clearSelection(); this.editText(o, one, false); }) : null,
+        items.every((i) => i.type === 'text') ? b('plus', 'Bigger', () => this.updateSelected((it) => { it.size = Math.min(200, Math.round(it.size * 1.2)); it.w = Math.round(it.w * 1.2); })) : null,
+        items.every((i) => i.type === 'text') ? b('minus', 'Smaller', () => this.updateSelected((it) => { it.size = Math.max(6, Math.round(it.size / 1.2)); it.w = Math.max(40, Math.round(it.w / 1.2)); })) : null,
         one && one.type === 'text' && one.bg ? b('note', 'Note colour', () => this.updateSelected((it) => { it.bg = STICKY_COLORS[(STICKY_COLORS.indexOf(it.bg) + 1) % STICKY_COLORS.length]; })) : null,
         closed.length ? b('fill', closed.every((i) => i.fill) ? 'Fill ✓' : 'Fill', () => { const on = !closed.every((i) => i.fill); this.updateSelected((it) => { if (it.type === 'stroke' && it.closed) it.fill = on || undefined; }); }) : null,
         b('palette', 'Colour', (e) => colorPopover(e.currentTarget, items.find((i) => i.color)?.color || '#000000', (c, final) => { if (final) this.recolorSelection(c); })),
@@ -1785,7 +1798,58 @@ export class Editor {
     ta.focus({ preventScroll: true });
     const len = ta.value.length;
     ta.setSelectionRange(len, len);
+    if (this.smallScreen()) { this.trayOpen = false; }
     this.renderToolbar();
+    this.renderTextBar();
+  }
+
+  renderTextBar() {
+    const B = this.textBar, te = this.textEdit;
+    if (!te) { B.hidden = true; return; }
+    const it = te.item, cfg = this.toolCfg('text');
+    // apply to this text box and remember as the default for new text
+    const set = (props) => {
+      for (const k of ['bold', 'italic', 'underline']) if (k in props) cfg[k] = !!props[k];
+      if ('align' in props) cfg.align = props.align || 'left';
+      if (props.size) cfg.sizes[cfg.size] = props.size;
+      if (props.color) { const i = cfg.colors.indexOf(props.color); if (i >= 0) cfg.color = i; }
+      if (props.font) cfg.font = props.font;
+      saveSettings();
+      this.applyTextStyle(props);
+      this.renderTextBar();
+    };
+    const tb = (label, title, fn, on, cls = '') => h('button', { class: 'tbar-btn ' + cls + (on ? ' on' : ''), title, 'aria-label': title, onClick: fn }, label);
+    const ic = (name) => h('span', { html: icons[name] });
+    const size = Math.round(it.size);
+    const al = it.align || 'left', nextAl = { left: 'center', center: 'right', right: 'left' }[al];
+    B.innerHTML = '';
+    B.append(
+      tb(it.font || 'Font', 'Font', (e) => fontPicker(e.currentTarget, it.font, (f) => { set({ font: f }); this.markAllDirty(); }), false, 'font'),
+      h('div', { class: 'tbar-size' },
+        tb('−', 'Smaller', () => set({ size: Math.max(6, size - (size > 30 ? 4 : 2)) })),
+        tb(String(size), 'Text size', (e) => sliderPopover(e.currentTarget, { label: 'Text size', min: 6, max: 120, step: 1, value: size, onInput: (v) => set({ size: v }) }), false, 'num'),
+        tb('+', 'Bigger', () => set({ size: Math.min(160, size + (size >= 30 ? 4 : 2)) }))),
+      tb(ic('bold'), 'Bold', () => set({ bold: !it.bold || undefined }), it.bold),
+      tb(ic('italic'), 'Italic', () => set({ italic: !it.italic || undefined }), it.italic),
+      tb(ic('underline'), 'Underline', () => set({ underline: !it.underline || undefined }), it.underline),
+      tb(ic('align' + al[0].toUpperCase() + al.slice(1)), 'Alignment', () => set({ align: nextAl === 'left' ? undefined : nextAl })),
+      h('div', { class: 'tbar-colors' }, cfg.colors.map((c) => h('button', {
+        class: 'tbar-sw' + (it.color === c ? ' on' : ''), title: 'Colour', 'aria-label': 'Colour', style: { background: inkColor(c, !it.bg && this.curDark()) }, onClick: () => set({ color: c }),
+      })), h('button', { class: 'tbar-sw more', title: 'More colours', 'aria-label': 'More colours', html: icons.palette, onClick: (e) => colorPopover(e.currentTarget, it.color, (c, fin) => { if (fin) set({ color: c }); else this.applyTextStyle({ color: c }); }) })),
+      tb(ic('check'), 'Done', () => { this.gripping = false; this.commitText(); }, false, 'done'));
+    B.hidden = false;
+    this.positionTextBar();
+  }
+
+  positionTextBar() {
+    const B = this.textBar, ta = this.textarea;
+    if (!this.textEdit || B.hidden) return;
+    const left = parseFloat(ta.style.left), top = parseFloat(ta.style.top);
+    const bw = B.offsetWidth, bh = B.offsetHeight;
+    const x = clamp(left, 6, Math.max(6, this.vw - bw - 6));
+    let y = top - bh - 46;
+    if (y < 6) y = top + ta.offsetHeight + 16;
+    B.style.transform = `translate(${x}px, ${clamp(y, 6, Math.max(6, this.vh - bh - 6))}px)`;
   }
 
   // Toolbar changes apply live to the text box being edited.
@@ -1821,6 +1885,7 @@ export class Editor {
     this.textGrip.style.transform = `translate(${left - 34}px, ${top - 6}px)`;
     this.textWidthGrip.style.transform = `translate(${left + w + 2}px, ${top}px)`;
     this.textWidthGrip.style.height = Math.max(24, ta.offsetHeight) + 'px';
+    this.positionTextBar();
   }
 
   // Drag the grip to move the text box, or its right edge to change the width.
@@ -1862,6 +1927,7 @@ export class Editor {
     const ta = this.textarea;
     ta.hidden = true;
     this.textGrip.hidden = this.textWidthGrip.hidden = true;
+    this.textBar.hidden = true;
     if (document.activeElement === ta) ta.blur();
     this.hidden = null;
     const page = te.o.page, item = te.item;

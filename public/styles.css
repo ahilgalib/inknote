@@ -523,3 +523,19 @@ button.act-card:hover { border-color: var(--accent); }
 .font-get { min-width: 46px; height: 30px; border-radius: 99px; background: var(--accent-soft); margin-right: 6px; }
 .font-get.done { background: transparent; color: #1f8a4c; }
 .font-note { margin: 0; text-align: center; }
+/* floating text format bar */
+.text-bar { position: absolute; left: 0; top: 0; z-index: 7; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; max-width: min(560px, calc(100% - 12px));
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 5px 6px; touch-action: manipulation; }
+.tbar-btn { min-width: 34px; height: 34px; padding: 0 6px; border-radius: 9px; display: inline-grid; place-items: center; font-weight: 700; font-size: 16px; flex: none; }
+.tbar-btn svg { width: 18px; height: 18px; }
+.tbar-btn:hover { background: var(--hover); }
+.tbar-btn.on { background: var(--accent-soft); color: var(--accent); }
+.tbar-btn.font { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; background: var(--panel-2); }
+.tbar-btn.num { min-width: 38px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.tbar-btn.done { background: var(--accent); color: #fff; }
+.tbar-size { display: inline-flex; align-items: center; background: var(--panel-2); border-radius: 10px; }
+.tbar-colors { display: inline-flex; align-items: center; gap: 4px; padding: 0 2px; }
+.tbar-sw { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line); flex: none; }
+.tbar-sw.on { box-shadow: 0 0 0 2.5px var(--accent); }
+.tbar-sw.more { display: grid; place-items: center; box-shadow: none; }
+.tbar-sw.more svg { width: 18px; height: 18px; }

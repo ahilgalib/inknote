@@ -21,7 +21,7 @@ export const LIGHT_INK = '#1d1d1f';
 export function inkColor(color, dark) {
   const l = lum(color);
   if (l < 0) return color;
-  if (dark && l < 48) return DARK_INK;
+  if (dark && l < 64) return DARK_INK;
   if (!dark && l > 232) return LIGHT_INK;
   return color;
 }
