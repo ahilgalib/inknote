@@ -43,6 +43,7 @@ export class Editor {
     this.onExit = onExit;
     this.tool = 'pen';
     this.prevTool = 'pen';
+    this.trayOpen = !(matchMedia('(max-width: 700px)').matches);
     this.undoStack = [];
     this.redoStack = [];
     this.images = new Map();
@@ -87,13 +88,13 @@ export class Editor {
       h('div', { class: 'grow' }),
       this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
       this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'),
-      this.findAnchor = btn('search', 'Find in note (Ctrl+F)', () => this.findPanel()),
-      this.timerBtn = h('button', { class: 'icon-btn timer-btn', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
+      this.findAnchor = btn('search', 'Find in note (Ctrl+F)', () => this.findPanel(), 'hide-phone'),
+      this.timerBtn = h('button', { class: 'icon-btn timer-btn hide-phone', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
       this.recBtn,
-      this.themeBtn = btn('moon', 'Dark / light pages', () => this.toggleDarkMode()),
+      this.themeBtn = btn('moon', 'Dark / light pages', () => this.toggleDarkMode(), 'hide-phone'),
       btn('template', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
       btn('share', 'Share & export', (e) => this.exportMenu(e.currentTarget)),
-      btn('expand', 'Full screen (4-finger tap)', () => this.toggleFocus()),
+      btn('expand', 'Full screen (4-finger tap)', () => this.toggleFocus(), 'hide-phone'),
       btn('more', 'More', (e) => this.moreMenu(e.currentTarget)));
 
     this.toolBtns = {};
@@ -108,10 +109,15 @@ export class Editor {
 
     this.undoBtn = btn('undo', 'Undo (2-finger tap)', () => this.undo());
     this.redoBtn = btn('redo', 'Redo (3-finger tap)', () => this.redo());
+    // phones: undo / redo live in the top bar so all tools fit on one row
+    this.undoBtnTop = btn('undo', 'Undo', () => this.undo(), 'phone-only');
+    this.redoBtnTop = btn('redo', 'Redo', () => this.redo(), 'phone-only');
+    topbar.insertBefore(this.redoBtnTop, this.syncPill);
+    topbar.insertBefore(this.undoBtnTop, this.redoBtnTop);
     this.optsEl = h('div', { class: 'tb-group opts' });
     const toolbar = h('div', { class: 'ed-toolbar' },
-      h('div', { class: 'tb-group tb-first' }, this.undoBtn, this.redoBtn),
-      h('div', { class: 'tb-sep' }), tools);
+      h('div', { class: 'tb-group tb-first hide-phone' }, this.undoBtn, this.redoBtn),
+      h('div', { class: 'tb-sep hide-phone' }), tools);
     // Notability-style floating style tray: favourites, colours, sizes, options
     this.tray = h('div', { class: 'style-tray' }, this.presetsEl, this.optsEl);
 
@@ -929,6 +935,7 @@ export class Editor {
   activeTool() { return this.eraserOverride ? 'eraser' : this.tool; }
 
   startTool(p, e) {
+    if (this.trayOpen && this.smallScreen()) { this.trayOpen = false; this.syncTray(); }
     const d = this.screenToDoc(p.sx, p.sy);
     const t = this.activeTool();
     if (this.meta.locked && t !== 'laser' && t !== 'hand') {
@@ -2052,8 +2059,8 @@ export class Editor {
   }
 
   updateUndo() {
-    this.undoBtn.disabled = !this.undoStack.length;
-    this.redoBtn.disabled = !this.redoStack.length;
+    this.undoBtn.disabled = this.undoBtnTop.disabled = !this.undoStack.length;
+    this.redoBtn.disabled = this.redoBtnTop.disabled = !this.redoStack.length;
   }
 
   // ---- pages ----
@@ -2286,11 +2293,10 @@ export class Editor {
       { label: 'Import images as pages…', icon: 'image', onClick: () => this.insertImagePages() },
       { label: 'Paste', icon: 'paste', onClick: () => this.paste() },
       { label: 'Fit to width', icon: 'zoomFit', onClick: () => this.fitWidth(false) },
+      { label: this.curDark() ? 'Light pages' : 'Dark pages', icon: this.curDark() ? 'sun' : 'moon', onClick: () => this.toggleDarkMode() },
+      { label: 'Full screen', icon: 'expand', onClick: () => this.toggleFocus() },
       '-',
-      { label: 'Draw with finger: Auto', checked: fd === 'auto', onClick: () => this.setFinger('auto') },
-      { label: 'Draw with finger: On', checked: fd === 'on', onClick: () => this.setFinger('on') },
-      { label: 'Draw with finger: Off', checked: fd === 'off', onClick: () => this.setFinger('off') },
-      { label: 'Eraser returns to pen', checked: settings.eraserAutoDeselect, onClick: () => { settings.eraserAutoDeselect = !settings.eraserAutoDeselect; saveSettings(); } },
+      { label: `Draw with finger: ${{ auto: 'Auto', on: 'On', off: 'Off' }[fd]}`, icon: 'hand', onClick: () => this.setFinger({ auto: 'on', on: 'off', off: 'auto' }[fd]) },
       { label: 'Gestures help', icon: 'hand', onClick: () => this.gestureHelp() },
       { label: 'Quick tips', icon: 'help', onClick: () => this.showTips(anchor) },
       '-',
@@ -2392,10 +2398,21 @@ export class Editor {
 
   // ---- toolbar ----
 
+  // First tap selects a tool and opens its style tray; tapping the active
+  // tool again opens / closes the tray (like Notability).
   toolTap(t) {
-    if (this.tool === t && (t === 'pen' || t === 'hl' || t === 'eraser')) { this.toolOptions(t); return; }
+    if (this.tool === t) { this.trayOpen = !this.trayOpen; this.syncTray(); return; }
+    this.trayOpen = true;
     this.setTool(t);
   }
+
+  syncTray() {
+    const empty = this.tool === 'hand';
+    this.tray.hidden = !this.trayOpen || empty;
+    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('tray-open', id === this.tool && !this.tray.hidden);
+  }
+
+  smallScreen() { return (this.vw || innerWidth) < 700; }
 
   setTool(t, keepSelection = false) {
     if (this.textEdit && t !== 'text') this.commitText();
@@ -2430,6 +2447,7 @@ export class Editor {
     for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('on', id === this.tool);
     this.toolboxBtn.classList.toggle('on', this.tool === 'tape' || this.tool === 'laser' || !!this.zoom || !!this.ruler);
     this.renderPresets(this.presetsEl);
+    this.syncTray();
     const O = this.optsEl;
     O.innerHTML = '';
     const t = this.tool;
