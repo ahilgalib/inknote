@@ -57,7 +57,17 @@ export function drawText(ctx, it, alpha = 1) {
   it.h = Math.max(1, lines.length) * lh;
   rotated(ctx, it, it.h, () => {
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = inkColor(it.color, ctx.__dark);
+    if (it.bg) {
+      const pad = Math.max(8, it.size * 0.6);
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.22)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 3;
+      ctx.fillStyle = it.bg;
+      ctx.fillRect(it.x - pad, it.y - pad, it.w + pad * 2, it.h + pad * 2);
+      ctx.restore();
+    }
+    ctx.fillStyle = inkColor(it.color, it.bg ? false : ctx.__dark);
     ctx.textBaseline = 'top';
     const align = it.align || 'left';
     ctx.textAlign = align;
@@ -179,6 +189,7 @@ export function visualBBox(it) {
   const b = itemBBox(it);
   if (it.type === 'image' && it.sticker) { const p = Math.max(b.w, b.h) * 0.1 + 4; return { x: b.x - p, y: b.y - p, w: b.w + p * 2, h: b.h + p * 2 }; }
   if (it.type === 'audio') return { x: b.x - 8, y: b.y - 6, w: b.w + 16, h: b.h + 14 };
+  if (it.type === 'text' && it.bg) { const p = Math.max(8, it.size * 0.6) + 14; return { x: b.x - p, y: b.y - p, w: b.w + p * 2, h: b.h + p * 2 }; }
   return b;
 }
 
@@ -206,8 +217,10 @@ export function drawItems(ctx, page, items, { images = new Map(), hidden, alpha,
     else if (it.type === 'audio' && vis(it)) drawAudioItem(ctx, it, dark);
   }
   for (const it of items) if (it.type === 'stroke' && it.tool === 'hl' && vis(it)) drawStroke(ctx, it, alpha ? alpha(it) : 1);
-  for (const it of items) if (it.type === 'stroke' && it.tool !== 'hl' && vis(it)) drawStroke(ctx, it, alpha ? alpha(it) : 1);
+  for (const it of items) if (it.type === 'stroke' && it.tool !== 'hl' && it.tool !== 'tape' && vis(it)) drawStroke(ctx, it, alpha ? alpha(it) : 1);
   for (const it of items) if (it.type === 'text' && vis(it)) drawText(ctx, it, alpha ? alpha(it) : 1);
+  // study tape covers everything under it
+  for (const it of items) if (it.type === 'stroke' && it.tool === 'tape' && vis(it)) drawStroke(ctx, it, alpha ? alpha(it) : 1);
   ctx.__dark = false;
 }
 

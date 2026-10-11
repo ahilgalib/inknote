@@ -1,4 +1,5 @@
 // Inknote sync API (Cloudflare Pages Functions + D1).
+//   GET  /api/config   POST /api/google (Sign in with Google)
 //   POST /api/signup  /api/login  /api/logout      GET|PATCH|DELETE /api/me
 //   GET  /api/changes?since=N                       POST /api/items
 //   POST /api/blobs/missing   PUT|GET /api/blob/:key
@@ -28,7 +29,21 @@ function safeEq(a, b) {
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 200;
 const validKey = (k) => /^[ab]_[A-Za-z0-9_\-]{4,120}$/.test(k);
-const userOut = (u) => ({ id: u.id, email: u.email, name: u.name, created: u.created });
+const GOOGLE_ONLY = 'google';             // pass_hash of accounts created with Google (no password)
+const userOut = (u) => ({ id: u.id, email: u.email, name: u.name, created: u.created, google: u.pass_hash === GOOGLE_ONLY || undefined });
+
+// Verify a Google Identity Services ID token (JWT) with Google.
+async function verifyGoogle(env, credential) {
+  const clientId = env.GOOGLE_CLIENT_ID;
+  if (!clientId || typeof credential !== 'string' || credential.length > 4096) return null;
+  const res = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(credential));
+  if (!res.ok) return null;
+  const t = await res.json();
+  const okIss = t.iss === 'accounts.google.com' || t.iss === 'https://accounts.google.com';
+  if (!okIss || t.aud !== clientId || Number(t.exp) * 1000 < Date.now()) return null;
+  if (t.email_verified !== true && t.email_verified !== 'true') return null;
+  return { email: String(t.email || '').toLowerCase(), name: String(t.name || '').slice(0, 80) };
+}
 
 async function limited(env, key, max, windowMs) {
   const now = Date.now();
@@ -72,6 +87,22 @@ export async function onRequest({ request: req, env, params }) {
   const method = req.method;
   try {
     // ---------- auth ----------
+    if (path === '/config' && method === 'GET') return json({ googleClientId: env.GOOGLE_CLIENT_ID || null });
+    if (path === '/google' && method === 'POST') {
+      const b = await req.json().catch(() => ({}));
+      const ip = req.headers.get('cf-connecting-ip') || 'x';
+      if (await limited(env, 'google:' + ip, 30, 3600e3)) return fail(429, 'Too many attempts, try again later');
+      const g = await verifyGoogle(env, b.credential);
+      if (!g || !validEmail(g.email)) return fail(401, 'Google sign-in failed — try again');
+      let user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(g.email).first();
+      if (!user) {
+        const id = randHex(12);
+        await env.DB.prepare('INSERT INTO users (id, email, name, pass_hash, salt, created) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(id, g.email, g.name || g.email.split('@')[0], GOOGLE_ONLY, randHex(16), Date.now()).run();
+        user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
+      }
+      return json({ token: await startSession(env, user.id), user: userOut(user) });
+    }
     if (path === '/signup' && method === 'POST') {
       const b = await req.json().catch(() => ({}));
       const email = str(b.email, 200).toLowerCase(), name = str(b.name, 80), password = typeof b.password === 'string' ? b.password : '';
@@ -91,6 +122,7 @@ export async function onRequest({ request: req, env, params }) {
       const email = str(b.email, 200).toLowerCase(), password = typeof b.password === 'string' ? b.password : '';
       if (await limited(env, 'login:' + email, 10, 900e3)) return fail(429, 'Too many attempts — wait 15 minutes');
       const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+      if (user && user.pass_hash === GOOGLE_ONLY) return fail(401, 'This account uses Google — tap “Continue with Google”');
       if (!user || !safeEq(await hashPass(password, user.salt), user.pass_hash)) return fail(401, 'Wrong email or password');
       return json({ token: await startSession(env, user.id), user: userOut(user) });
     }
@@ -112,7 +144,8 @@ export async function onRequest({ request: req, env, params }) {
       }
       if (method === 'DELETE') {
         const b = await req.json().catch(() => ({}));
-        if (!safeEq(await hashPass(String(b.password || ''), user.salt), user.pass_hash)) return fail(403, 'Wrong password');
+        if (user.pass_hash === GOOGLE_ONLY) { if (b.password !== 'DELETE') return fail(403, 'Type DELETE to confirm'); }
+        else if (!safeEq(await hashPass(String(b.password || ''), user.salt), user.pass_hash)) return fail(403, 'Wrong password');
         await env.DB.batch([
           env.DB.prepare('DELETE FROM blobs WHERE user_id = ?').bind(user.id),
           env.DB.prepare('DELETE FROM items WHERE user_id = ?').bind(user.id),

@@ -28,8 +28,11 @@ export function inkColor(color, dark) {
 
 export const round2 = (v) => Math.round(v * 100) / 100;
 
+// Study tape that is currently peeled back (tap a tape to show what is under it).
+export const openTapes = new Set();
+
 export function penRadius(size, p, style) {
-  if (style === 'ball' || style === 'dash') return size * (0.78 + 0.22 * p) / 2;
+  if (style === 'ball' || style === 'dash' || style === 'dot' || style === 'pencil') return size * (0.78 + 0.22 * p) / 2;
   return size * (0.32 + 0.95 * p) / 2;           // fountain: strong pressure response
 }
 
@@ -82,7 +85,9 @@ export function penPath(pts, size, style = 'fountain') {
     let dx = d[b * 3] - d[a * 3], dy = d[b * 3 + 1] - d[a * 3 + 1];
     const len = Math.hypot(dx, dy);
     if (len < 1e-6) { dx = 1; dy = 0; } else { dx /= len; dy /= len; }
-    const r = R(i), x = d[i * 3], y = d[i * 3 + 1];
+    let r = R(i);
+    if (style === 'calli') r = Math.max(0.3, size * (0.12 + 1.05 * Math.abs(dx * 0.7071 + dy * 0.7071)) * (0.75 + 0.35 * d[i * 3 + 2]) / 2);
+    const x = d[i * 3], y = d[i * 3 + 1];
     L.push(x - dy * r, y + dx * r);
     Rt.push(x + dy * r, y - dx * r);
   }
@@ -158,7 +163,7 @@ function getPath(it) {
   if (!c) { c = {}; cache.set(it, c); }
   if (!c.path) {
     if (it.shape) c.path = polyPath(it.pts, it.closed);
-    else if (it.tool === 'hl' || it.style === 'dash') c.path = smoothLine(it.pts, it.size);
+    else if (it.tool === 'hl' || it.tool === 'tape' || it.style === 'dash' || it.style === 'dot') c.path = smoothLine(it.pts, it.size);
     else c.path = penPath(it.pts, it.size, it.style);
   }
   return c.path;
@@ -168,7 +173,27 @@ function getPath(it) {
 export function drawStroke(ctx, it, alpha = 1, path) {
   path = path || getPath(it);
   ctx.save();
-  if (it.tool === 'hl') {
+  if (it.tool === 'tape') {
+    const open = openTapes.has(it.id);
+    ctx.globalAlpha = alpha * (open ? 0.9 : 1);
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'round';
+    if (open) {
+      ctx.strokeStyle = it.color;
+      ctx.lineWidth = Math.max(1, it.size * 0.07);
+      ctx.setLineDash([it.size * 0.3, it.size * 0.25]);
+      ctx.stroke(path);
+    } else {
+      ctx.strokeStyle = it.color;
+      ctx.lineWidth = it.size;
+      ctx.stroke(path);
+      ctx.globalAlpha = alpha * 0.18;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = it.size * 0.34;
+      ctx.setLineDash([it.size * 0.18, it.size * 0.5]);
+      ctx.stroke(path);
+    }
+  } else if (it.tool === 'hl') {
     ctx.globalAlpha = 0.36 * alpha;
     if (!ctx.__dark) ctx.globalCompositeOperation = 'multiply';
     ctx.strokeStyle = it.color;
@@ -185,16 +210,21 @@ export function drawStroke(ctx, it, alpha = 1, path) {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke(path);
-  } else if (it.shape || it.style === 'dash') {
+  } else if (it.shape || it.style === 'dash' || it.style === 'dot') {
     const col = inkColor(it.color, ctx.__dark);
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = col;
-    ctx.lineWidth = Math.max(0.6, it.size * 0.8);
+    ctx.lineWidth = Math.max(0.6, it.size * (it.style === 'dot' ? 1.1 : 0.8));
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     if (it.style === 'dash') ctx.setLineDash([it.size * 2.6, it.size * 2.2]);
+    else if (it.style === 'dot') ctx.setLineDash([0.01, it.size * 2.4]);
     ctx.stroke(path);
     if (it.fill) { ctx.setLineDash([]); ctx.globalAlpha = alpha * 0.22; ctx.fillStyle = col; ctx.fill(path); }
+  } else if (it.style === 'pencil') {
+    ctx.globalAlpha = alpha * 0.92;
+    ctx.fillStyle = pencilPattern(inkColor(it.color, ctx.__dark));
+    ctx.fill(path);
   } else {
     ctx.globalAlpha = alpha;
     ctx.fillStyle = inkColor(it.color, ctx.__dark);
@@ -203,11 +233,33 @@ export function drawStroke(ctx, it, alpha = 1, path) {
   ctx.restore();
 }
 
+// Grainy fill that looks like graphite / coloured pencil.
+const pencilPatterns = new Map();
+let patternCtx;
+function pencilPattern(color) {
+  let p = pencilPatterns.get(color);
+  if (p) return p;
+  const c = document.createElement('canvas');
+  c.width = c.height = 48;
+  const x = c.getContext('2d');
+  x.fillStyle = color;
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 0; i < 48 * 48 * 0.62; i++) {
+    x.globalAlpha = 0.35 + rnd() * 0.65;
+    x.fillRect(Math.floor(rnd() * 48), Math.floor(rnd() * 48), 1, 1);
+  }
+  patternCtx = patternCtx || document.createElement('canvas').getContext('2d');
+  p = patternCtx.createPattern(c, 'repeat');
+  pencilPatterns.set(color, p);
+  return p;
+}
+
 // Live (uncached) version used while the pen is down.
 export function drawLiveStroke(ctx, it) {
   let path;
   if (it.shape) path = polyPath(it.pts, it.closed);
-  else if (it.tool === 'hl' || it.tool === 'laser' || it.style === 'dash') path = smoothLine(it.pts, it.size);
+  else if (it.tool === 'hl' || it.tool === 'laser' || it.tool === 'tape' || it.style === 'dash' || it.style === 'dot') path = smoothLine(it.pts, it.size);
   else path = penPath(it.pts, it.size, it.style);
   drawStroke(ctx, it, it.alpha ?? 1, path);
 }
@@ -237,7 +289,7 @@ export function strokeHitSegment(it, ax, ay, bx, by, r) {
   const b = itemBBox(it);
   const pad = r + 2;
   if (Math.max(ax, bx) < b.x - pad || Math.min(ax, bx) > b.x + b.w + pad || Math.max(ay, by) < b.y - pad || Math.min(ay, by) > b.y + b.h + pad) return false;
-  const p = it.pts, tol = r + (it.tool === 'hl' ? it.size / 2 : it.size * 0.45);
+  const p = it.pts, tol = r + (it.tool === 'hl' || it.tool === 'tape' ? it.size / 2 : it.size * 0.45);
   if (p.length === 3) return distSeg(p[0], p[1], ax, ay, bx, by) <= tol;
   const n = p.length;
   for (let i = 0; i < n - 3; i += 3) {
