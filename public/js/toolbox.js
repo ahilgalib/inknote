@@ -15,6 +15,23 @@ const EMOJI = ['⭐', '✅', '❌', '❗', '❓', '💡', '📌', '📎', '📝'
 const STICKY = ['#fff3a0', '#ffd6e0', '#cdeffd', '#d6f5c9', '#ffe1bf', '#e5dcff'];
 export const STICKY_COLORS = STICKY;
 
+// Study timer shared by every open note (keeps running when you switch notes).
+let studyTimer = null; // { end, label, total }
+
+function beep() {
+  try {
+    const A = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.25, 0.5].forEach((t) => {
+      const o = A.createOscillator(), g = A.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(A.destination);
+      g.gain.setValueAtTime(0.0001, A.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.25, A.currentTime + t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, A.currentTime + t + 0.2);
+      o.start(A.currentTime + t); o.stop(A.currentTime + t + 0.22);
+    });
+  } catch {}
+}
+
 function roundRect(ctx, x, y, w, hh, r) {
   ctx.beginPath();
   if (ctx.roundRect) ctx.roundRect(x, y, w, hh, r); else ctx.rect(x, y, w, hh);
@@ -34,7 +51,11 @@ export const toolboxMethods = {
         tile('sparkle', 'Stickers', 'Emoji stickers', () => this.stickerPicker(anchor)),
         tile('note', 'Sticky note', 'A coloured note card', () => this.addSticky()),
         tile('search', 'Find', 'Search this note', () => this.findPanel()),
-        tile('dropper', 'Eyedropper', 'Pick a colour from the page', () => this.startEyedropper()))), { className: 'wide' });
+        tile('dropper', 'Eyedropper', 'Pick a colour from the page', () => this.startEyedropper()),
+        tile('timer', 'Study timer', 'Focus sessions & breaks', () => this.timerMenu(this.timerBtn)),
+        tile('check2', 'Tape quiz', 'Reveal answers one by one', () => this.startQuiz()),
+        tile('pages', 'Side by side', 'Open another note next to this one', () => this.splitMenu(anchor)),
+        tile('lock', this.meta.locked ? 'Unlock' : 'Lock note', 'Read-only, no accidental edits', () => this.toggleLock(), !!this.meta.locked))), { className: 'wide' });
   },
 
   // ------------------------------------------------------------ ruler ----
@@ -511,6 +532,95 @@ export const toolboxMethods = {
     this.changed();
     this.flashIndicator(p.bookmark ? 'Page bookmarked' : 'Bookmark removed');
     if (!this.pagesPanel.hidden) this.renderPagesPanel();
+  },
+
+  // --------------------------------------------------------- study timer --
+
+  timerMenu(anchor) {
+    const start = (min, label) => { studyTimer = { end: Date.now() + min * 60000, label, total: min * 60000 }; this.renderTimer(); toast(`${label} · ${min} min`); };
+    menu(anchor, [
+      { label: 'Focus 25 min', icon: 'timer', onClick: () => start(25, 'Focus') },
+      { label: 'Focus 50 min', icon: 'timer', onClick: () => start(50, 'Focus') },
+      { label: 'Short break 5 min', icon: 'timer', onClick: () => start(5, 'Break') },
+      { label: 'Long break 15 min', icon: 'timer', onClick: () => start(15, 'Break') },
+      { label: 'Custom…', icon: 'timer', onClick: async () => {
+        const { promptDialog } = await import('./ui.js');
+        const v = parseFloat(await promptDialog('Timer (minutes)', '30', { ok: 'Start' }));
+        if (v > 0 && v < 600) start(v, 'Timer');
+      } },
+      studyTimer ? '-' : null,
+      studyTimer ? { label: 'Stop timer', icon: 'stop', danger: true, onClick: () => { studyTimer = null; this.renderTimer(); } } : null,
+    ]);
+  },
+
+  renderTimer() {
+    const B = this.timerBtn;
+    if (!B) return;
+    if (!studyTimer) { B.classList.remove('running'); B.innerHTML = icons.timer; return; }
+    const left = studyTimer.end - Date.now();
+    if (left <= 0) {
+      const lbl = studyTimer.label;
+      studyTimer = null;
+      B.classList.remove('running');
+      B.innerHTML = icons.timer;
+      beep();
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      toast(lbl === 'Break' ? 'Break is over — back to work!' : 'Time is up — take a break! 🎉', 5000);
+      return;
+    }
+    const m = Math.floor(left / 60000), sec = Math.floor(left / 1000) % 60;
+    B.classList.add('running');
+    B.classList.toggle('break', studyTimer.label === 'Break');
+    B.innerHTML = icons.timer;
+    B.append(h('span', {}, `${m}:${String(sec).padStart(2, '0')}`));
+  },
+
+  // ------------------------------------------------------ tape quiz mode ---
+
+  startQuiz() {
+    const list = [];
+    this.pages.forEach((p, i) => p.items.filter((it) => it.tool === 'tape').map((it) => ({ i, it, b: itemBBox(it) }))
+      .sort((a, b) => a.b.y - b.b.y || a.b.x - b.b.x).forEach((x) => list.push(x)));
+    if (!list.length) { toast('Draw some tape over answers first'); return; }
+    this.setAllTapes(false);
+    this.quiz = { list, i: 0, shown: false };
+    if (this.quizBar) this.quizBar.remove();
+    this.quizLabel = h('span', { class: 'quiz-label' });
+    this.quizBar = h('div', { class: 'quiz-bar' }, this.quizLabel,
+      h('button', { class: 'btn primary', onClick: () => this.quizReveal() }, 'Reveal'),
+      h('button', { class: 'btn', onClick: () => this.quizStep(1) }, 'Next ›'),
+      h('button', { class: 'icon-btn sm', 'aria-label': 'End quiz', html: icons.close, onClick: () => this.endQuiz() }));
+    this.stage.append(this.quizBar);
+    this.quizStep(0);
+  },
+
+  quizStep(d) {
+    const Q = this.quiz;
+    Q.i = Math.max(0, Math.min(Q.list.length - 1, Q.i + d));
+    if (d > 0 && Q.i === Q.list.length - 1 && Q.shown) { toast('That was the last one — well done!'); }
+    Q.shown = false;
+    const { i, b } = Q.list[Q.i], o = this.lay[i];
+    if (!o) return;
+    this.cam.y = this.vh * 0.4 - (o.y + b.y + b.h / 2) * this.cam.s;
+    this.clampCam();
+    this.quizLabel.textContent = `Question ${Q.i + 1} of ${Q.list.length}`;
+    this.flashTape = Q.list[Q.i].it.id;
+    this.requestRender();
+  },
+
+  quizReveal() {
+    const Q = this.quiz;
+    const { it, i } = Q.list[Q.i];
+    openTapes.add(it.id);
+    Q.shown = true;
+    this.markDirty(this.lay[i].page);
+  },
+
+  endQuiz() {
+    this.quiz = null;
+    this.flashTape = null;
+    if (this.quizBar) { this.quizBar.remove(); this.quizBar = null; }
+    this.requestRender();
   },
 
   // -------------------------------------------------------------- tips ----

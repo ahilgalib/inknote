@@ -15,6 +15,9 @@ Works offline, installs to your home screen, and syncs automatically across all 
 - **Favourite pens**: save any pen / highlighter / tape with ★ and switch in one tap
 - **Toolbox** (like Notability): **Zoom window** (write big in a magnified panel, it lands small on the page, auto-advances), **Tape** (cover answers and tap to peek — quiz yourself), **Ruler** (draw along its edge at any angle, snaps to 15°), Laser, emoji **Stickers**, **Sticky notes**, **Find in note**, **Eyedropper**
 - Shapes can be filled; page bookmarks; go to page; lock a note (read only)
+- **Notability-style layout**: centred tools with a floating style tray
+- **Side by side (multi-note)**: open two notes next to each other, copy & paste between them
+- **Study timer** (focus / break sessions) and **Tape quiz** (reveal covered answers one by one)
 - Palm rejection: once a Pencil is used, fingers only scroll and zoom (Auto / On / Off)
 - Notability-style eraser: **precise**, **whole stroke**, or **highlighter only** — and it jumps back to your pen after erasing
 - Stylus eraser end / eraser button supported
@@ -37,8 +40,8 @@ Works offline, installs to your home screen, and syncs automatically across all 
 
 **Pages & templates**
 - Continuous pages, page thumbnails, add / reorder / duplicate / delete, auto-add page
-- 12 papers (lined, grid, dots, Cornell, music, isometric, storyboard, to-do…)
-- 24 detailed planner templates (Assignment Planner, Daily Goals, Daily Planner light/dark, Habit Tracker, Mind Map, Monthly/Weekly Planner, Finance, Travel, Flashcards, Lecture & Meeting notes…)
+- 19 papers (lined, grid, dots, Cornell, music, isometric, storyboard, to-do, engineering, handwriting practice, calligraphy guide, hexagon, guitar tab, legal pad, polar graph)
+- 39 detailed planner templates in categories Study / Planning / Work / Life (Assignment Planner, Class Timetable, Exam Prep, Cornell Notes, Lab Report, Math Problems, Vocabulary, Book Notes, Year at a Glance, Kanban Board, Project Planner, Weekly Review, Monthly Budget, Meal Planner, Workout Log, Reading Log, Habit Tracker, Mind Map…)
 - Customise accent colour, paper colour, heading, size & orientation
 - Import PDFs (annotate) and images as pages; export PDF, PNG, note file; print
 
@@ -48,7 +51,7 @@ Works offline, installs to your home screen, and syncs automatically across all 
 - Audio clips on the page: add audio files (or place a recording) as a clip you tap to play; move and copy them like anything else
 
 **Library & sync**
-- Notability-style home: quick actions, templates, recent notes; folders; **Favorites**; grid or list view; search; Recently Deleted (30 days)
+- Notability-style home: quick actions, templates, recent notes; folders; **Favorites**; grid or list view; **select several notes** to favourite / move / duplicate / delete; search; Recently Deleted (30 days)
 - **Scan documents** with the camera (paper turns white, ink dark)
 - Free account (**Continue with Google** or email) → automatic background sync of notes, folders, images, PDFs and audio
 - Fully offline: everything saves on the device first and syncs when you're back online; if the same note was edited on two devices, both sets of changes are merged (nothing written offline is lost)
