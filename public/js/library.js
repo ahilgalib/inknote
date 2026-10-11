@@ -29,6 +29,8 @@ export class Library {
     this.openNote = openNote;
     this.view = localStorage.getItem('inknote.view') || 'home';
     this.query = '';
+    this.selecting = false;
+    this.picked = new Set();
     this.el = h('div', { class: 'library' });
     this.onRemote = () => this.refresh();
     this.onAcct = () => this.render();
@@ -62,6 +64,8 @@ export class Library {
   go(view) {
     this.view = view;
     this.query = '';
+    this.selecting = false;
+    this.picked = new Set();
     try { localStorage.setItem('inknote.view', view); } catch {}
     this.el.classList.remove('side-open');
     this.render();
@@ -160,13 +164,19 @@ export class Library {
       menuBtn,
       h('h1', {}, folder ? h('span', { class: 'dot big', style: { background: folder.color } }) : null, title),
       h('div', { class: 'grow' }),
+      this.view === 'trash' ? null : h('button', { class: 'btn' + (this.selecting ? ' primary' : ''), onClick: () => { this.selecting = !this.selecting; this.picked.clear(); this.renderMainOnly(); } }, this.selecting ? 'Done' : 'Select'),
       this.view === 'trash' ? null : h('button', { class: 'icon-btn', title: settings.libView === 'list' ? 'Grid view' : 'List view', 'aria-label': 'Change view', html: icons[settings.libView === 'list' ? 'grid' : 'list'], onClick: () => { settings.libView = settings.libView === 'list' ? 'grid' : 'list'; saveSettings(); this.renderMainOnly(); } }),
       this.view === 'trash' ? null : h('button', { class: 'icon-btn', title: 'Sort', 'aria-label': 'Sort', html: icons.menu, onClick: (e) => this.sortMenu(e.currentTarget) }),
       this.view === 'trash' ? (this.trash.length ? h('button', { class: 'btn', onClick: () => this.emptyTrash() }, 'Empty') : null)
         : h('button', { class: 'btn primary', onClick: (e) => this.newMenu(e.currentTarget) }, h('span', { html: icons.plus }), h('span', { class: 'hide-xs' }, 'New'))));
     if (this.view === 'trash') main.append(h('p', { class: 'muted pad-x' }, 'Notes stay here for 30 days, then they are deleted for good.'));
-    this.grid = h('div', { class: 'grid' + (settings.libView === 'list' ? ' list' : '') });
+    this.grid = h('div', { class: 'grid' + (settings.libView === 'list' ? ' list' : '') + (this.selecting ? ' selecting' : '') });
     main.append(h('div', { class: 'grid-wrap' }, this.grid));
+    if (this.selecting) {
+      this.pickBar = h('div', { class: 'pick-bar' });
+      main.append(this.pickBar);
+      this.renderPickBar();
+    }
     this.renderGrid();
     return main;
   }
@@ -238,11 +248,39 @@ export class Library {
     for (const n of list) G.append(this.noteCard(n));
   }
 
+  renderPickBar() {
+    const B = this.pickBar;
+    if (!B) return;
+    B.innerHTML = '';
+    const ids = [...this.picked], list = this.notes.filter((n) => this.picked.has(n.id));
+    const act = (icon, label, fn, cls = '') => h('button', { class: 'pick-act ' + cls, disabled: !ids.length, onClick: fn }, h('span', { html: icons[icon] }), h('small', {}, label));
+    const done = () => { this.selecting = false; this.picked.clear(); this.refresh(); };
+    B.append(h('b', { class: 'pick-count' }, ids.length ? `${ids.length} selected` : 'Tap notes to select'),
+      act('starOn', 'Favorite', async () => { const on = !list.every((n) => n.starred); for (const n of list) { if (on) n.starred = true; else delete n.starred; await touchMeta(n); } done(); }),
+      act('folder', 'Move', (e) => menu(e.currentTarget, [
+        { label: 'No folder', onClick: async () => { for (const n of list) { n.subjectId = null; await touchMeta(n); } done(); } },
+        ...this.folders.map((f) => ({ label: f.name, onClick: async () => { for (const n of list) { n.subjectId = f.id; await touchMeta(n); } done(); } })),
+      ])),
+      act('duplicate', 'Duplicate', async () => { for (const n of list) await duplicateNote(n); done(); }),
+      act('trash', 'Delete', async () => { for (const n of list) await trashNote(n); toast(`Moved ${list.length} to Recently Deleted`); done(); }, 'danger'),
+      h('button', { class: 'link-btn', onClick: () => { const all = this.visibleNotes(); if (this.picked.size === all.length) this.picked.clear(); else all.forEach((n) => this.picked.add(n.id)); this.renderGrid(); this.renderPickBar(); } }, 'All'));
+  }
+
   noteCard(n) {
     const folder = this.folders.find((s) => s.id === n.subjectId);
     const trashed = !!n.trashed;
-    const card = h('div', { class: 'card' },
-      h('button', { class: 'card-open', onClick: () => trashed ? this.trashMenu(card, n) : this.openNote(n.id), 'aria-label': 'Open ' + n.title },
+    const open = () => {
+      if (this.selecting && !trashed) {
+        if (this.picked.has(n.id)) this.picked.delete(n.id); else this.picked.add(n.id);
+        card.classList.toggle('picked', this.picked.has(n.id));
+        this.renderPickBar();
+        return;
+      }
+      trashed ? this.trashMenu(card, n) : this.openNote(n.id);
+    };
+    const card = h('div', { class: 'card' + (this.picked.has(n.id) ? ' picked' : '') },
+      h('button', { class: 'card-open', onClick: open, 'aria-label': 'Open ' + n.title },
+        this.selecting ? h('span', { class: 'pick-mark', html: icons.check }) : null,
         h('div', { class: 'thumb' }, n.thumb ? h('img', { src: n.thumb, alt: '', loading: 'lazy' }) : h('div', { class: 'thumb-blank' }))),
       h('div', { class: 'card-meta' },
         h('div', { class: 'card-text' },

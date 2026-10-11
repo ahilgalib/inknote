@@ -2,7 +2,7 @@
 import { h } from './util.js';
 import { icons } from './icons.js';
 import { sheet, colorPopover } from './ui.js';
-import { PLANNERS, PAPERS, ACCENTS, PAPER_COLORS, SIZES, templatePreview, plannerById, plannerPaperColor } from './templates.js';
+import { PLANNERS, PAPERS, ACCENTS, PAPER_COLORS, SIZES, templatePreview, plannerById, plannerPaperColor, TEMPLATE_CATS } from './templates.js';
 
 export function templateCard(id, onClick, width = 220) {
   const p = plannerById(id);
@@ -14,7 +14,7 @@ export function templateCard(id, onClick, width = 220) {
 
 // opts: { title, action, onPick({template,color,tpl,size,count}), start: 'planners'|'paper' }
 export function templateGallery({ title = 'New note from template', action = 'Create note', onPick, start = 'planners', open } = {}) {
-  let tab = start;
+  let tab = start, cat = 'all';
   const body = h('div', { class: 'gal-body' });
   const S = sheet(h('div', { class: 'gallery' },
     h('div', { class: 'gal-head' }, h('h2', {}, title), h('div', { class: 'grow' }), h('button', { class: 'icon-btn', 'aria-label': 'Close', html: icons.close, onClick: () => S.close() })),
@@ -26,8 +26,10 @@ export function templateGallery({ title = 'New note from template', action = 'Cr
       h('button', { class: tab === 'planners' ? 'on' : '', onClick: () => { tab = 'planners'; grid(); } }, 'Planners & templates'),
       h('button', { class: tab === 'paper' ? 'on' : '', onClick: () => { tab = 'paper'; grid(); } }, 'Paper'));
     const g = h('div', { class: 'tpl-grid-lg' });
-    body.append(seg, g);
-    const ids = tab === 'planners' ? PLANNERS.map((p) => p.id) : PAPERS.map((p) => p.id);
+    const cats = tab === 'planners' ? h('div', { class: 'row wrap cat-row' }, TEMPLATE_CATS.map(([v, l]) =>
+      h('button', { class: 'chip' + (cat === v ? ' on' : ''), onClick: () => { cat = v; grid(); } }, l))) : null;
+    body.append(...[seg, cats, g].filter(Boolean));
+    const ids = tab === 'planners' ? PLANNERS.filter((p) => cat === 'all' || p.cat === cat).map((p) => p.id) : PAPERS.map((p) => p.id);
     // build previews progressively so the sheet opens instantly
     let i = 0;
     const step = () => {

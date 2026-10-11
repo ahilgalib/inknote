@@ -26,7 +26,8 @@ const CLIP_PREFIX = 'inknote-clip:';
 const DARK_PAPER = '#141416';
 const PEN_STYLES = [['fountain', 'Fountain'], ['ball', 'Ballpoint'], ['calli', 'Calligraphy'], ['pencil', 'Pencil'], ['dash', 'Dashed'], ['dot', 'Dotted']];
 const DRAW_TOOLS = ['pen', 'hl', 'laser', 'tape'];
-let clipboard = null;    // { id, items } shared between notes
+let clipboard = null;    // { id, items } shared between notes (and between split panes)
+let activeEditor = null; // with two notes side by side, keys / paste go to the one last touched
 
 const TOOLS = [
   ['pen', 'Pen', 'P', 'pen'], ['hl', 'Highlighter', 'H', 'highlighter'], ['eraser', 'Eraser', 'E', 'eraser'],
@@ -59,7 +60,9 @@ export class Editor {
     body.zc = Math.max(body.zc || 0, zc);
     this.save = debounce(() => this.persist(), 1000);
     this.baseIds = bodyIds(body);
+    activeEditor = this;
     this.build();
+    this.el.addEventListener('pointerdown', () => this.activate(), true);
     this.layoutPages();
     loadFont(settings.tools.text.font);
   }
@@ -85,6 +88,7 @@ export class Editor {
       this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
       this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'),
       this.findAnchor = btn('search', 'Find in note (Ctrl+F)', () => this.findPanel()),
+      this.timerBtn = h('button', { class: 'icon-btn timer-btn', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
       this.recBtn,
       this.themeBtn = btn('moon', 'Dark / light pages', () => this.toggleDarkMode()),
       btn('template', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
@@ -106,8 +110,10 @@ export class Editor {
     this.redoBtn = btn('redo', 'Redo (3-finger tap)', () => this.redo());
     this.optsEl = h('div', { class: 'tb-group opts' });
     const toolbar = h('div', { class: 'ed-toolbar' },
-      h('div', { class: 'tb-group' }, this.undoBtn, this.redoBtn),
-      h('div', { class: 'tb-sep' }), tools, h('div', { class: 'tb-sep' }), this.presetsEl, this.optsEl);
+      h('div', { class: 'tb-group tb-first' }, this.undoBtn, this.redoBtn),
+      h('div', { class: 'tb-sep' }), tools);
+    // Notability-style floating style tray: favourites, colours, sizes, options
+    this.tray = h('div', { class: 'style-tray' }, this.presetsEl, this.optsEl);
 
     this.main = h('canvas', { class: 'cv-main' });
     this.liveCv = h('canvas', { class: 'cv-live' });
@@ -132,7 +138,7 @@ export class Editor {
     this.pagesPanel = h('aside', { class: 'pages-panel', hidden: true });
 
     this.el = h('div', { class: 'editor' }, topbar, toolbar,
-      h('div', { class: 'ed-body' }, this.pagesPanel, this.stage), this.audioBar);
+      h('div', { class: 'ed-body' }, this.pagesPanel, this.stage, this.tray), this.audioBar);
 
     const cv = this.liveCv;
     cv.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -164,9 +170,26 @@ export class Editor {
     this.ro.observe(this.stage);
 
     this.unsubSync = onStatus((st) => this.renderSyncPill(st));
+    this.timerTick = setInterval(() => this.renderTimer(), 1000);
+    this.renderTimer();
     this.renderToolbar();
     this.renderAudioBar();
     TEMPLATE_FONTS.forEach((f) => loadFont(f.split(':')[0]));
+  }
+
+  activate() {
+    if (activeEditor === this) return;
+    activeEditor = this;
+    for (const el of document.querySelectorAll('.editor.active')) el.classList.remove('active');
+    this.el.classList.add('active');
+  }
+
+  inSplit() { return !!this.el.closest('.panes.split'); }
+
+  async splitMenu(anchor) {
+    const others = (await db.all('notes')).filter((n) => !n.trashed && n.id !== this.meta.id).sort((a, b) => b.updated - a.updated).slice(0, 25);
+    if (!others.length) { toast('Create another note first'); return; }
+    menu(anchor, others.map((n) => ({ label: n.title, icon: 'notes', onClick: () => { location.hash = `#/split/${encodeURIComponent(this.meta.id)}/${encodeURIComponent(n.id)}`; } })));
   }
 
   mount(parent) {
@@ -562,6 +585,17 @@ export class Editor {
         }
       }
       ctx.restore();
+    }
+    if (this.quiz && this.flashTape) {
+      const q = this.quiz.list[this.quiz.i], o = this.lay[q.i];
+      if (o) {
+        const b = itemBBox(q.it), s = this.cam.s;
+        this.pageTransform(ctx, o);
+        ctx.save();
+        ctx.strokeStyle = '#f5b400'; ctx.lineWidth = 3 / s; ctx.setLineDash([8 / s, 5 / s]);
+        ctx.strokeRect(b.x - 6 / s, b.y - 6 / s, b.w + 12 / s, b.h + 12 / s);
+        ctx.restore();
+      }
     }
     if (this.zoom) this.drawZoomBox(ctx);
     if (this.ruler) this.drawRuler(ctx);
@@ -1441,8 +1475,11 @@ export class Editor {
     if (!r) return;
     const mw = this.selMenu.offsetWidth, mh = this.selMenu.offsetHeight;
     const left = clamp(r.x + r.w / 2 - mw / 2, 6, this.vw - mw - 6);
+    // keep clear of the floating style tray at the top
+    const minTop = this.tray && !this.tray.hidden && this.el.classList.contains('focus') === false ? this.tray.offsetTop + this.tray.offsetHeight + 8 : 6;
     let top = r.y - mh - 46;
-    if (top < 6) top = Math.min(this.vh - mh - 6, r.y + r.h + 18);
+    if (top < minTop) top = Math.min(this.vh - mh - 6, r.y + r.h + 18);
+    if (top < minTop) top = minTop;
     this.selMenu.style.transform = `translate(${left}px, ${top}px)`;
   }
 
@@ -1560,6 +1597,7 @@ export class Editor {
   }
 
   handlePasteEvent(e) {
+    if (activeEditor !== this) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
     if (this.meta.locked) { toast('This note is locked'); return; }
@@ -2259,6 +2297,8 @@ export class Editor {
       { label: this.pages[this.currentIndex()].bookmark ? 'Remove bookmark' : 'Bookmark this page', icon: 'bookmark', onClick: () => this.toggleBookmark() },
       { label: 'Go to page…', icon: 'pages', onClick: () => this.goToPage() },
       { label: 'Find in note', icon: 'search', onClick: () => this.findPanel() },
+      this.inSplit() ? { label: 'Close this side', icon: 'close', onClick: () => this.exit() } : { label: 'Open another note side by side…', icon: 'pages', onClick: () => this.splitMenu(anchor) },
+      { label: 'Study timer…', icon: 'timer', onClick: () => this.timerMenu(this.timerBtn) },
       { label: this.meta.locked ? 'Unlock note' : 'Lock note (read only)', icon: this.meta.locked ? 'unlock' : 'lock', onClick: () => this.toggleLock() },
       '-',
       { label: 'Delete this page', icon: 'trash', danger: true, onClick: () => this.deletePage() },
@@ -2425,7 +2465,8 @@ export class Editor {
       swatches();
       O.append(h('div', { class: 'tb-sep sm' }));
       sizes((sz) => h('span', { class: 'tape-dot', style: { width: Math.min(26, 8 + sz / 2) + 'px', height: Math.min(14, 4 + sz / 4) + 'px', background: cfg.colors[cfg.color] } }));
-      O.append(h('button', { class: 'chip', onClick: () => this.setAllTapes(true) }, 'Reveal all'),
+      O.append(h('button', { class: 'chip', onClick: () => this.startQuiz() }, 'Quiz me'),
+        h('button', { class: 'chip', onClick: () => this.setAllTapes(true) }, 'Reveal all'),
         h('button', { class: 'chip', onClick: () => this.setAllTapes(false) }, 'Cover all'),
         h('span', { class: 'hint' }, 'Draw tape over answers · tap a tape to peek'));
     } else if (t === 'text') {
@@ -2458,6 +2499,7 @@ export class Editor {
   }
 
   handleKey(e) {
+    if (activeEditor !== this) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
@@ -2797,6 +2839,9 @@ export class Editor {
 
   destroy() {
     clearTimeout(this.remoteT);
+    clearInterval(this.timerTick);
+    if (activeEditor === this) activeEditor = null;
+    if (this.quizBar) this.quizBar.remove();
     if (this.unsubSync) this.unsubSync();
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('keyup', this.onKeyUp);

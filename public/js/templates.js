@@ -59,6 +59,13 @@ export const PAPERS = [
   { id: 'isometric', label: 'Isometric' },
   { id: 'storyboard', label: 'Storyboard' },
   { id: 'todo', label: 'To-do list' },
+  { id: 'engineer', label: 'Engineering' },
+  { id: 'practice', label: 'Handwriting practice' },
+  { id: 'calli', label: 'Calligraphy guide' },
+  { id: 'hex', label: 'Hexagon' },
+  { id: 'tab', label: 'Guitar tab' },
+  { id: 'legal', label: 'Legal pad' },
+  { id: 'polar', label: 'Polar graph' },
 ];
 
 function drawBasic(ctx, t, w, h, dark) {
@@ -104,6 +111,50 @@ function drawBasic(ctx, t, w, h, dark) {
       ctx.strokeStyle = line; hl(y + ch + 22, x, x + cw); hl(y + ch + 44, x, x + cw);
       ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(30,30,30,0.45)';
     }
+  } else if (t === 'engineer') {
+    const gap = 16;
+    ctx.strokeStyle = dark ? 'rgba(120,220,170,0.16)' : 'rgba(40,150,100,0.18)';
+    for (let y = gap, i = 1; y < h; y += gap, i++) { ctx.lineWidth = i % 5 ? 0.6 : 1.3; hl(y); }
+    for (let x = gap, i = 1; x < w; x += gap, i++) { ctx.lineWidth = i % 5 ? 0.6 : 1.3; vl(x); }
+  } else if (t === 'practice') {
+    // three-line handwriting practice: top, dashed middle, baseline
+    for (let y = 90; y + 54 < h - 30; y += 78) {
+      ctx.setLineDash([]); ctx.lineWidth = 1; hl(y, 40, w - 40); hl(y + 48, 40, w - 40);
+      ctx.setLineDash([6, 6]); hl(y + 24, 40, w - 40);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = strong; hl(y + 48, 40, w - 40); ctx.strokeStyle = line;
+    }
+  } else if (t === 'calli') {
+    for (let y = 80; y + 60 < h - 20; y += 72) { hl(y); hl(y + 18); hl(y + 42); hl(y + 60); }
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,0.08)' : 'rgba(60,100,170,0.12)';
+    const slope = Math.tan(55 * Math.PI / 180);
+    for (let x = -h; x < w; x += 34) { ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x + h / slope, 0); ctx.stroke(); }
+  } else if (t === 'hex') {
+    const r = 18, hh = r * Math.sqrt(3);
+    for (let row = 0, y = 0; y < h + hh; row++, y += hh / 2) {
+      for (let x = (row % 2) * r * 1.5; x < w + r; x += r * 3) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) { const a = Math.PI / 3 * i; const px = x + r * Math.cos(a), py = y + r * Math.sin(a); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+        ctx.closePath(); ctx.stroke();
+      }
+    }
+  } else if (t === 'tab') {
+    const g = 10, block = g * 5 + 56;
+    ctx.fillStyle = dark ? 'rgba(255,255,255,0.4)' : 'rgba(40,60,90,0.5)';
+    ctx.font = '700 11px Inter, sans-serif';
+    for (let y = 80; y + g * 5 < h - 40; y += block) {
+      for (let i = 0; i < 6; i++) hl(y + i * g, 50, w - 50);
+      ['T', 'A', 'B'].forEach((c, i) => ctx.fillText(c, 36, y + 14 + i * 16));
+      vl(50, y, y + g * 5); vl(w - 50, y, y + g * 5);
+    }
+  } else if (t === 'legal') {
+    for (let y = 110; y < h - 20; y += 30) hl(y);
+    ctx.strokeStyle = strong;
+    vl(Math.round(w * 0.12)); vl(Math.round(w * 0.12) + 4);
+  } else if (t === 'polar') {
+    const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 40;
+    for (let r = R / 10; r <= R + 0.5; r += R / 10) { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); }
+    for (let a = 0; a < 360; a += 15) { const t2 = a * Math.PI / 180; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(t2) * R, cy + Math.sin(t2) * R); ctx.stroke(); }
   } else if (t === 'todo') {
     for (let y = 110; y < h - 40; y += 40) {
       hl(y, 90, w - 50);
@@ -523,6 +574,175 @@ export const PLANNERS = [
     k.label('Summary', M, sum + 22);
     k.ruled(M, sum + 26, 720, H - sum - 70, 26);
   } },
+  // ---- more study & life templates ----
+  { id: 'yearly', label: 'Year at a Glance', cat: 'planning', theme: 'blue', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Year at a Glance', M, 74);
+    k.field('Year:', 620, 70, 768);
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const cw = 720 / 3, ch = (H - 140) / 4;
+    months.forEach((m, i) => {
+      const x = M + (i % 3) * cw, y = 100 + Math.floor(i / 3) * ch;
+      k.rect(x + 4, y + 4, cw - 8, ch - 8, { stroke: T.line, radius: 6 });
+      k.rect(x + 4, y + 4, cw - 8, 22, { stroke: null, fill: T.soft, radius: 6 });
+      k.label(m, x + 14, y + 19);
+      k.grid(x + 12, y + 34, cw - 24, ch - 50, 7, 5);
+    });
+  } },
+  { id: 'kanban', label: 'Kanban Board', cat: 'work', theme: 'blue', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Kanban Board', M, 74);
+    const cols = ['To do', 'Doing', 'Done'], cw = 720 / 3;
+    cols.forEach((c, i) => {
+      const x = M + i * cw;
+      k.rect(x + 6, 100, cw - 12, H - 150, { stroke: T.line, fill: T.soft, radius: 10 });
+      k.label(c, x + 20, 124);
+      for (let y = 144; y + 70 < H - 60; y += 86) k.rect(x + 16, y, cw - 32, 70, { stroke: T.line, fill: T.paper, radius: 6 });
+    });
+  } },
+  { id: 'timetable', label: 'Class Timetable', cat: 'study', theme: 'blue', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Class Timetable', M, 74);
+    k.field('Term:', 600, 70, 768);
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const periods = 9, x0 = M + 54, cw = (720 - 54) / days.length, rh = (H - 170) / (periods + 1);
+    k.rect(M, 100, 720, rh * (periods + 1), { stroke: T.accent });
+    k.rect(M, 100, 720, rh, { stroke: null, fill: T.soft });
+    days.forEach((d, i) => { k.label(d, x0 + i * cw + cw / 2, 100 + rh / 2 + 3, { align: 'center' }); k.line(x0 + i * cw, 100, x0 + i * cw, 100 + rh * (periods + 1), T.accent); });
+    for (let p = 1; p <= periods; p++) {
+      k.line(M, 100 + rh * p, M + 720, 100 + rh * p, p === 1 ? T.accent : T.line);
+      k.text(String(p), M + 27, 100 + rh * p + rh / 2 + 4, { size: 10, weight: 700, color: T.label, align: 'center' });
+    }
+  } },
+  { id: 'exam', label: 'Exam Prep', cat: 'study', theme: 'green', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Exam Prep', M, 74);
+    k.field('Subject:', M, 108, 420); k.field('Exam date:', 440, 108, 768);
+    k.header('Topics to revise', M, 150, 330); k.checklist(M, 160, 330, 300);
+    k.header('Formulas & key facts', 438, 150, 330); k.rect(438, 162, 330, 300, { stroke: T.line, radius: 6 }); k.dotsIn(438, 162, 330, 300, 18);
+    k.header('Practice log', M, 500, 720);
+    k.table(M, 512, [['Date', 1], ['Paper / questions', 3], ['Score', 1], ['Mistakes to fix', 3]], 6, 30, 720);
+    k.header('Night before checklist', M, 760, 720); k.checklist(M, 770, 720, H - 820);
+  } },
+  { id: 'reading', label: 'Reading Log', cat: 'life', theme: 'warm', draw(k, H, T) {
+    const M = 48;
+    k.blob(720, 60, 150, T.blob);
+    k.title(T.title || 'Reading Log', M, 92);
+    const rows = Math.floor((H - 200) / 34);
+    k.table(M, 130, [['Title', 4], ['Author', 3], ['Started', 2], ['Finished', 2], ['★', 1]], rows, 34, 720);
+  } },
+  { id: 'bookNotes', label: 'Book Notes', cat: 'study', theme: 'warm', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Book Notes', M, 92);
+    k.field('Title:', M, 130, 500); k.field('Author:', 520, 130, 768);
+    k.header('Big ideas', M, 170, 720); k.ruled(M, 180, 720, 180, 28);
+    k.header('Favourite quotes', M, 400, 350); k.ruled(M, 410, 350, 240, 28);
+    k.header('Characters / people', 418, 400, 350); k.ruled(418, 410, 350, 240, 28);
+    k.header('What I will do differently', M, 690, 720); k.ruled(M, 700, 720, H - 750, 28);
+  } },
+  { id: 'vocab', label: 'Vocabulary', cat: 'study', theme: 'blue', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Vocabulary', M, 74);
+    k.field('Language / subject:', 430, 70, 768);
+    const rows = Math.floor((H - 170) / 40);
+    k.table(M, 100, [['Word', 2], ['Meaning', 4], ['Example sentence', 5]], rows, 40, 720);
+  } },
+  { id: 'lab', label: 'Lab Report', cat: 'study', theme: 'green', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Lab Report', M, 74);
+    k.field('Experiment:', M, 108, 520); k.field('Date:', 540, 108, 768);
+    const parts = [['Aim / question', 90], ['Hypothesis', 70], ['Materials', 90], ['Method', 160], ['Results & observations', 200], ['Conclusion', 0]];
+    let y = 145;
+    for (const [lbl, hh] of parts) {
+      const height = hh || H - y - 60;
+      k.header(lbl, M, y, 720);
+      if (lbl.startsWith('Results')) { k.rect(M, y + 12, 720, height - 6, { stroke: T.line }); k.grid(M, y + 12, 720, height - 6, 24, 8, T.soft); }
+      else k.ruled(M, y + 10, 720, height - 10, 26);
+      y += height + 30;
+    }
+  } },
+  { id: 'mathNotes', label: 'Math Problems', cat: 'study', theme: 'blue', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Math Problems', M, 74);
+    k.field('Topic:', 480, 70, 768);
+    const bh = (H - 140) / 3;
+    for (let i = 0; i < 3; i++) {
+      const y = 100 + i * bh;
+      k.rect(M, y, 720, bh - 16, { stroke: T.accent, radius: 6 });
+      k.label('Problem ' + (i + 1), M + 12, y + 20);
+      k.line(M + 240, y, M + 240, y + bh - 16, T.line);
+      k.label('Working', M + 254, y + 20);
+      k.dotsIn(M + 240, y + 26, 480, bh - 46, 16);
+      k.label('Answer', M + 12, y + bh - 40);
+      k.rect(M + 12, y + bh - 34, 210, 22, { stroke: T.accent, radius: 4 });
+    }
+  } },
+  { id: 'budget', label: 'Monthly Budget', cat: 'life', theme: 'green', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Monthly Budget', M, 74);
+    k.field('Month:', 600, 70, 768);
+    k.header('Income', M, 112, 330); k.table(M, 124, [['Source', 3], ['Amount', 1]], 5, 28, 330);
+    k.header('Savings goals', 438, 112, 330); k.checklist(438, 124, 330, 168);
+    k.header('Expenses', M, 330, 720);
+    const rows = Math.floor((H - 480) / 28);
+    k.table(M, 342, [['Category', 3], ['Planned', 1], ['Actual', 1], ['Difference', 1]], rows, 28, 720);
+    k.field('Total left:', M, H - 70, 400);
+  } },
+  { id: 'meals', label: 'Meal Planner', cat: 'life', theme: 'warm', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Meal Planner', M, 92);
+    k.field('Week of:', 560, 90, 768);
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const rh = (H - 340) / 8;
+    k.table(M, 120, [['Day', 2], ['Breakfast', 3], ['Lunch', 3], ['Dinner', 3]], 7, rh, 720);
+    days.forEach((d, i) => k.text(d, M + 8, 120 + rh * (i + 1) + rh / 2 + 4, { size: 10, weight: 600, color: T.label }));
+    k.header('Grocery list', M, H - 190, 720); k.checklist(M, H - 180, 340, 130); k.checklist(418, H - 180, 350, 130);
+  } },
+  { id: 'workout', label: 'Workout Log', cat: 'life', theme: 'green', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Workout Log', M, 74);
+    k.field('Date:', 600, 70, 768); k.days(612, 96);
+    const rows = Math.floor((H - 330) / 32);
+    k.table(M, 120, [['Exercise', 4], ['Sets', 1], ['Reps', 1], ['Weight', 1], ['Notes', 3]], rows, 32, 720);
+    k.header('How I felt', M, H - 160, 720); k.ruled(M, H - 150, 720, 100, 26);
+  } },
+  { id: 'project', label: 'Project Planner', cat: 'work', theme: 'blue', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Project Planner', M, 74);
+    k.field('Project:', M, 108, 520); k.field('Deadline:', 540, 108, 768);
+    k.header('Goal', M, 150, 720); k.ruled(M, 160, 720, 78, 26);
+    k.header('Milestones', M, 270, 720);
+    k.table(M, 282, [['Milestone', 4], ['Owner', 2], ['Due', 1], ['✓', 1]], 6, 30, 720);
+    k.header('Tasks', M, 520, 350); k.checklist(M, 530, 350, H - 580);
+    k.header('Notes & risks', 418, 520, 350); k.ruled(418, 530, 350, H - 580, 26);
+  } },
+  { id: 'cornellPro', label: 'Cornell Notes', cat: 'study', theme: 'blue', draw(k, H, T) {
+    const M = 48;
+    k.title(T.title || 'Cornell Notes', M, 74);
+    k.field('Subject:', 430, 70, 600); k.field('Date:', 612, 70, 768);
+    k.field('Topic:', M, 108, 768);
+    const cue = 250, sum = H - 190;
+    k.rect(M, 130, cue - M, sum - 130, { stroke: null, fill: T.soft });
+    k.label('Questions / cues', M + 10, 150); k.label('Notes', cue + 16, 150);
+    k.line(cue, 130, cue, sum, T.accent, 1.4);
+    k.ruled(cue + 10, 156, 768 - cue - 10, sum - 166, 26);
+    k.line(M, sum, 768, sum, T.accent, 1.4);
+    k.label('Summary', M, sum + 22);
+    k.ruled(M, sum + 26, 720, H - sum - 70, 26);
+  } },
+  { id: 'weeklyReview', label: 'Weekly Review', cat: 'planning', theme: 'warm', draw(k, H, T) {
+    const M = 48;
+    k.blob(700, 70, 160, T.blob);
+    k.title(T.title || 'Weekly Review', M, 92);
+    k.field('Week of:', 560, 90, 768);
+    const box = (x, y, w, hh, lbl) => { k.rect(x, y, w, hh, { stroke: T.accent, width: 1.1, radius: 8 }); k.text('◆  ' + lbl, x + 12, y + 22, { size: 10, weight: 600, color: T.accent }); };
+    const bh = (H - 180) / 3;
+    box(M, 120, 350, bh - 14, 'Wins this week');
+    box(418, 120, 350, bh - 14, 'What I learned');
+    box(M, 120 + bh, 350, bh - 14, 'What was hard');
+    box(418, 120 + bh, 350, bh - 14, 'Grateful for');
+    box(M, 120 + bh * 2, 720, bh - 14, 'Focus for next week');
+  } },
 ];
 
 function dailyPlanner(k, H, T) {
@@ -555,6 +775,12 @@ const THEMES = {
   green: { paper: '#ffffff', ink: '#2b3a33', accent: '#2f8f5b', label: '#55655c', line: '#d5e2da', muted: '#8a9a90', soft: '#eef5f0' },
   dark: { paper: '#141416', ink: '#f4f4f6', accent: '#5b86e5', label: '#c9ccd6', line: '#3a3d46', muted: '#80848f', soft: '#1f2229' },
 };
+
+const CATS = { assignment: 'study', semester: 'study', flashcard: 'study', twoColumn: 'study', lecture: 'study', meeting: 'work', mindmap: 'work', finance: 'life', travelJournal: 'life', travelPlanner: 'life',
+  gratitude: 'life', health: 'life', journal: 'life', selfcare: 'life', sleep: 'life', habit: 'life', dailyGoals: 'planning', itinerary: 'planning', plannerDark: 'planning', plannerLight: 'planning', tasks: 'planning',
+  goal: 'planning', monthly: 'planning', weekly: 'planning' };
+for (const p of PLANNERS) p.cat = p.cat || CATS[p.id] || 'planning';
+export const TEMPLATE_CATS = [['all', 'All'], ['study', 'Study'], ['planning', 'Planning'], ['work', 'Work'], ['life', 'Life']];
 
 export function plannerById(id) { return PLANNERS.find((p) => p.id === id); }
 
