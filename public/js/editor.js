@@ -835,7 +835,15 @@ export class Editor {
     if (g.length >= 3) return; // 3+ fingers: reserved for gestures, no scrolling
     if (g.length === 2) {
       const dist = Math.hypot(g[0].sx - g[1].sx, g[0].sy - g[1].sy);
-      this.cam.s = clamp(G.s0 * dist / (G.dist || 1), 0.12, 10);
+      // magnetic "fit page": the zoom sticks at fit width while you pinch past it
+      let ns = clamp(G.s0 * dist / (G.dist || 1), 0.12, 10);
+      const fit = this.fitScale();
+      if (Math.abs(ns / fit - 1) < 0.07) {
+        if (!G.atFit && navigator.vibrate) navigator.vibrate(6);
+        G.atFit = true;
+        ns = fit;
+      } else G.atFit = false;
+      this.cam.s = ns;
       this.cam.x = cx - G.anchor.x * this.cam.s;
       this.cam.y = cy - G.anchor.y * this.cam.s;
       this.flashIndicator(Math.round(this.cam.s / this.fitScale() * 100) + '%');
@@ -867,8 +875,11 @@ export class Editor {
         else if (G.maxN >= 4) this.toggleFocus();
         else if (G.maxN === 1) this.tapAt(G.last);
       }
-      // quick pinch-in snaps back to fit width
-      if (G.moved && G.maxN === 2 && dt < 320 && this.cam.s < G.startS * 0.8) { this.fitWidth(false); }
+      // pinch ends near "fit" or zoomed out too far → glide back to fit width
+      if (G.moved && G.maxN >= 2) {
+        const fit = this.fitScale(), r = this.cam.s / fit;
+        if ((dt < 320 && this.cam.s < G.startS * 0.8) || r < 1.15) { this.snapToFit(G.last); return; }
+      }
     }
     const sm = G.samples;
     if (G.moved && G.n === 1 && sm.length >= 2) {
@@ -895,7 +906,10 @@ export class Editor {
     this.inertia = requestAnimationFrame(step);
   }
 
-  stopInertia() { if (this.inertia) { cancelAnimationFrame(this.inertia); this.inertia = 0; } }
+  stopInertia() {
+    if (this.inertia) { cancelAnimationFrame(this.inertia); this.inertia = 0; }
+    if (this.snapRaf) { cancelAnimationFrame(this.snapRaf); this.snapRaf = 0; }
+  }
 
   onWheel(e) {
     e.preventDefault();
@@ -907,6 +921,8 @@ export class Editor {
     if (e.ctrlKey || e.metaKey) {
       this.zoomAt(pos.x, pos.y, this.cam.s * Math.exp(-dy * 0.01));
       this.flashIndicator(Math.round(this.cam.s / this.fitScale() * 100) + '%');
+      clearTimeout(this.wheelSnap);
+      this.wheelSnap = setTimeout(() => { const r = this.cam.s / this.fitScale(); if (r < 1.12) this.snapToFit(pos); }, 260);
     } else {
       if (e.shiftKey && !dx) { dx = dy; dy = 0; }
       this.cam.x -= dx; this.cam.y -= dy;
@@ -915,6 +931,31 @@ export class Editor {
     }
     this.requestRender();
     this.setInteracting(false);
+  }
+
+  // Smoothly animate the zoom to fit width, keeping the point under the
+  // fingers in place vertically and the page centred horizontally.
+  snapToFit(at) {
+    const fit = this.fitScale();
+    const ax = this.vw / 2, ay = at ? at.y : this.vh / 2;
+    const anchor = this.screenToDoc(ax, ay);
+    const s0 = this.cam.s, x0 = this.cam.x, y0 = this.cam.y;
+    const x1 = this.vw / 2, y1 = ay - anchor.y * fit;
+    if (Math.abs(s0 - fit) < 1e-3 && Math.abs(x0 - x1) < 0.5) { this.setInteracting(false); return; }
+    cancelAnimationFrame(this.snapRaf);
+    const t0 = performance.now(), dur = 220;
+    const step = () => {
+      const t = Math.min(1, (performance.now() - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+      this.cam.s = s0 + (fit - s0) * e;
+      this.cam.x = x0 + (x1 - x0) * e;
+      this.cam.y = y0 + (y1 - y0) * e;
+      this.clampCam();
+      this.requestRender();
+      if (t < 1) this.snapRaf = requestAnimationFrame(step);
+      else { this.flashIndicator('Fit'); this.setInteracting(false); }
+    };
+    this.setInteracting(true);
+    this.snapRaf = requestAnimationFrame(step);
   }
 
   zoomAt(sx, sy, s) {
