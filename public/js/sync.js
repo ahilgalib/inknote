@@ -65,6 +65,22 @@ export async function signIn(email, password) {
   return r.user;
 }
 
+// Sign in with Google (Google Identity Services ID token).
+export async function signInGoogle(credential) {
+  const r = await apiJSON('/google', { method: 'POST', body: { credential } });
+  acct = { token: r.token, user: r.user, cursor: 0, last: 0 };
+  save();
+  window.dispatchEvent(new Event('inknote-account'));
+  syncNow();
+  return r.user;
+}
+
+let configP = null;
+export function serverConfig() {
+  if (!configP) configP = apiJSON('/config').catch(() => { configP = null; return {}; });
+  return configP;
+}
+
 export async function signOut() {
   try { await api('/logout', { method: 'POST' }); } catch {}
   acct = null;

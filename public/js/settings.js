@@ -16,10 +16,15 @@ const DEFAULTS = {
   defaultColor: '#ffffff',
   defaultSize: 'letter',
   sort: 'updated',
+  libView: 'grid',          // grid | list
+  presets: [],              // favourite pens: { tool, color, size, style }
+  tipsSeen: false,
+  stickerImages: true,
   name: '',
   tools: {
     pen: { colors: ['#1d1d1f', '#1f5bd8', '#d93434', '#1f8a4c', '#8a3ffc'], color: 0, sizes: [1.4, 2.4, 4.2], size: 1, style: 'fountain' },
-    hl: { colors: ['#ffe24a', '#7ef29a', '#ff8fd0', '#7cc8ff', '#ffb050'], color: 0, sizes: [10, 18, 28], size: 1 },
+    hl: { colors: ['#ffe24a', '#7ef29a', '#ff8fd0', '#7cc8ff', '#ffb050'], color: 0, sizes: [10, 18, 28], size: 1, straight: false },
+    tape: { colors: ['#f2b84b', '#7cc8ff', '#ff8fa3', '#9be29b', '#b7a6ff'], color: 0, sizes: [14, 24, 36], size: 1 },
     eraser: { mode: 'precise', sizes: [6, 14, 30], size: 1 },
     text: { colors: ['#1d1d1f', '#1f5bd8', '#d93434', '#1f8a4c', '#8a3ffc'], color: 0, sizes: [14, 20, 30], size: 1, font: 'Inter', bold: false, italic: false, underline: false, align: 'left' },
     laser: { colors: ['#ff3b30', '#34c759', '#0a84ff'], color: 0, sizes: [4], size: 0 },

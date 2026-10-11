@@ -11,7 +11,10 @@ Works offline, installs to your home screen, and syncs automatically across all 
 
 **Writing (tuned for Apple Pencil)**
 - Smooth, pressure-sensitive ink: curve-fitted strokes, smoothed pressure, no redraw lag, saving never runs while the pen is down
-- Pen styles: fountain, ballpoint, dashed · highlighter (under the ink) · laser pointer
+- Pen styles: fountain, ballpoint, **calligraphy**, **pencil**, dashed, dotted · highlighter (under the ink, optional straight lines) · laser pointer
+- **Favourite pens**: save any pen / highlighter / tape with ★ and switch in one tap
+- **Toolbox** (like Notability): **Zoom window** (write big in a magnified panel, it lands small on the page, auto-advances), **Tape** (cover answers and tap to peek — quiz yourself), **Ruler** (draw along its edge at any angle, snaps to 15°), Laser, emoji **Stickers**, **Sticky notes**, **Find in note**, **Eyedropper**
+- Shapes can be filled; page bookmarks; go to page; lock a note (read only)
 - Palm rejection: once a Pencil is used, fingers only scroll and zoom (Auto / On / Off)
 - Notability-style eraser: **precise**, **whole stroke**, or **highlighter only** — and it jumps back to your pen after erasing
 - Stylus eraser end / eraser button supported
@@ -45,8 +48,9 @@ Works offline, installs to your home screen, and syncs automatically across all 
 - Audio clips on the page: add audio files (or place a recording) as a clip you tap to play; move and copy them like anything else
 
 **Library & sync**
-- Notability-style home: quick actions, templates, recent notes; folders; search; Recently Deleted (30 days)
-- Free account → automatic background sync of notes, folders, images, PDFs and audio
+- Notability-style home: quick actions, templates, recent notes; folders; **Favorites**; grid or list view; search; Recently Deleted (30 days)
+- **Scan documents** with the camera (paper turns white, ink dark)
+- Free account (**Continue with Google** or email) → automatic background sync of notes, folders, images, PDFs and audio
 - Fully offline: everything saves on the device first and syncs when you're back online; if the same note was edited on two devices, both sets of changes are merged (nothing written offline is lost)
 - Sync status in the editor: Offline · Syncing · Synced
 - Backup export / import
@@ -70,6 +74,11 @@ Open http://localhost:8801.
 Or let GitHub deploy for you: add the repository secrets `CLOUDFLARE_API_TOKEN` (a token with *Account → Cloudflare Pages → Edit*) and `CLOUDFLARE_ACCOUNT_ID`; every push to `main` then deploys automatically (`.github/workflows/deploy.yml`).
 
 Without the `functions/` API the app still works fully offline (no sync).
+
+### Sign in with Google (optional)
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials) create an **OAuth client ID** of type *Web application* and add your site (e.g. `https://inknote.pages.dev`) to **Authorized JavaScript origins**.
+2. In Cloudflare → Workers & Pages → *inknote* → Settings → **Variables and Secrets**, add `GOOGLE_CLIENT_ID` = that client id (Production), then redeploy.
+The “Continue with Google” button appears automatically once the variable is set.
 
 ## Layout
 ```

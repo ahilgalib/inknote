@@ -11,7 +11,7 @@ import {
 import { menu, popover, promptDialog, confirmDialog, progressDialog, closePopover, sheet } from './ui.js';
 import { SIZES } from './templates.js';
 import { templateGallery, templateCard } from './gallery.js';
-import { account, onStatus, signIn, signUp, signOut, updateName, deleteAccount, syncNow, getStatus } from './sync.js';
+import { account, onStatus, signIn, signUp, signOut, updateName, deleteAccount, syncNow, getStatus, signInGoogle, serverConfig } from './sync.js';
 
 const FOLDER_COLORS = ['#e5484d', '#f76b15', '#f5b400', '#30a46c', '#0090ff', '#6e56cf', '#d6409f', '#7c8088'];
 const REPO = 'https://github.com/ahilgalib/inknote';
@@ -104,6 +104,8 @@ export class Library {
           h('button', { class: 'icon-btn sm', title: 'Import', 'aria-label': 'Import', html: icons.download, onClick: (e) => this.importMenu(e.currentTarget) })),
         h('button', { class: 'side-item' + (this.view === 'all' ? ' on' : ''), onClick: () => this.go('all') },
           h('span', { class: 'si', html: icons.template }), h('span', { class: 'label' }, 'All notes'), h('span', { class: 'count' }, String(this.notes.length))),
+        h('button', { class: 'side-item' + (this.view === 'fav' ? ' on' : ''), onClick: () => this.go('fav') },
+          h('span', { class: 'si', html: icons.star }), h('span', { class: 'label' }, 'Favorites'), h('span', { class: 'count' }, String(this.notes.filter((n) => n.starred).length))),
         noteRows,
         h('div', { class: 'side-h' }, h('span', {}, 'Folders'),
           h('button', { class: 'icon-btn sm', title: 'New folder', 'aria-label': 'New folder', html: icons.plus, onClick: () => this.newFolder() })),
@@ -153,16 +155,17 @@ export class Library {
     if (this.view === 'home') { main.append(h('div', { class: 'phone-bar' }, menuBtn, h('div', { class: 'grow' }), h('button', { class: 'icon-btn', 'aria-label': 'New note', html: icons.pen, onClick: () => this.create() })), this.renderHome()); return main; }
 
     const folder = this.view.startsWith('folder:') ? this.folders.find((f) => 'folder:' + f.id === this.view) : null;
-    const title = this.view === 'trash' ? 'Recently Deleted' : folder ? folder.name : 'All notes';
+    const title = this.view === 'trash' ? 'Recently Deleted' : this.view === 'fav' ? 'Favorites' : folder ? folder.name : 'All notes';
     main.append(h('header', { class: 'lib-head' },
       menuBtn,
       h('h1', {}, folder ? h('span', { class: 'dot big', style: { background: folder.color } }) : null, title),
       h('div', { class: 'grow' }),
+      this.view === 'trash' ? null : h('button', { class: 'icon-btn', title: settings.libView === 'list' ? 'Grid view' : 'List view', 'aria-label': 'Change view', html: icons[settings.libView === 'list' ? 'grid' : 'list'], onClick: () => { settings.libView = settings.libView === 'list' ? 'grid' : 'list'; saveSettings(); this.renderMainOnly(); } }),
       this.view === 'trash' ? null : h('button', { class: 'icon-btn', title: 'Sort', 'aria-label': 'Sort', html: icons.menu, onClick: (e) => this.sortMenu(e.currentTarget) }),
       this.view === 'trash' ? (this.trash.length ? h('button', { class: 'btn', onClick: () => this.emptyTrash() }, 'Empty') : null)
         : h('button', { class: 'btn primary', onClick: (e) => this.newMenu(e.currentTarget) }, h('span', { html: icons.plus }), h('span', { class: 'hide-xs' }, 'New'))));
     if (this.view === 'trash') main.append(h('p', { class: 'muted pad-x' }, 'Notes stay here for 30 days, then they are deleted for good.'));
-    this.grid = h('div', { class: 'grid' });
+    this.grid = h('div', { class: 'grid' + (settings.libView === 'list' ? ' list' : '') });
     main.append(h('div', { class: 'grid-wrap' }, this.grid));
     this.renderGrid();
     return main;
@@ -179,7 +182,7 @@ export class Library {
         h('h1', {}, 'What should we learn today?'),
         h('p', { class: 'muted' }, `“${q}” — ${who}`)),
       h('div', { class: 'actions' },
-        card('upload', 'Import a file', 'PDF, images, notes', (e) => this.importMenu(e.currentTarget)),
+        card('upload', 'Import or scan', 'PDF, images, notes, camera scan', (e) => this.importMenu(e.currentTarget)),
         h('div', { class: 'act-card big' },
           h('span', { class: 'act-ico mic', html: icons.mic }),
           h('b', {}, 'Record & take notes'),
@@ -210,6 +213,7 @@ export class Library {
     const q = this.query.trim().toLowerCase();
     let list = this.view === 'trash' ? this.trash : this.notes;
     if (this.view.startsWith('folder:')) list = list.filter((n) => 'folder:' + n.subjectId === this.view);
+    if (this.view === 'fav') list = list.filter((n) => n.starred);
     if (q) list = list.filter((n) => (n.title + ' ' + (n.text || '')).toLowerCase().includes(q));
     const sort = settings.sort;
     return [...list].sort((a, b) => this.view === 'trash' ? b.trashed - a.trashed : sort === 'title' ? a.title.localeCompare(b.title) : sort === 'created' ? b.created - a.created : b.updated - a.updated);
@@ -223,7 +227,7 @@ export class Library {
     if (!list.length) {
       G.append(h('div', { class: 'empty' },
         h('div', { class: 'empty-art', html: this.view === 'trash' ? icons.trash : icons.pen }),
-        h('h2', {}, this.query ? 'No matching notes' : this.view === 'trash' ? 'Nothing here' : 'No notes yet'),
+        h('h2', {}, this.query ? 'No matching notes' : this.view === 'trash' ? 'Nothing here' : this.view === 'fav' ? 'No favorites yet' : 'No notes yet'),
         h('p', { class: 'muted' }, this.query ? 'Try another word.' : this.view === 'trash' ? 'Deleted notes appear here for 30 days.' : 'Create a note, start from a template, or import a PDF.'),
         this.query || this.view === 'trash' ? null : h('div', { class: 'row center' },
           h('button', { class: 'btn primary', onClick: () => this.create() }, 'New note'),
@@ -242,7 +246,7 @@ export class Library {
         h('div', { class: 'thumb' }, n.thumb ? h('img', { src: n.thumb, alt: '', loading: 'lazy' }) : h('div', { class: 'thumb-blank' }))),
       h('div', { class: 'card-meta' },
         h('div', { class: 'card-text' },
-          h('div', { class: 'card-title' }, n.title),
+          h('div', { class: 'card-title' }, n.starred ? h('span', { class: 'star', html: icons.starOn }) : null, n.locked ? h('span', { class: 'star', html: icons.lock }) : null, n.title),
           h('div', { class: 'card-sub' }, folder ? h('span', { class: 'dot', style: { background: folder.color } }) : null,
             trashed ? `Deleted ${timeAgo(n.trashed)}` : `${timeAgo(n.updated)} · ${n.pageCount || 1} p`)),
         h('button', { class: 'icon-btn sm', title: 'Note options', 'aria-label': 'Note options', html: icons.more, onClick: (e) => trashed ? this.trashMenu(e.currentTarget, n) : this.noteMenu(e.currentTarget, n) })));
@@ -284,6 +288,7 @@ export class Library {
       '-',
       { label: 'Import PDF to annotate', icon: 'pdf', onClick: () => this.importPDF() },
       { label: 'Import images as pages', icon: 'image', onClick: () => this.importImages() },
+      { label: 'Scan document', icon: 'scan', onClick: () => this.scan() },
       { label: 'Import note / backup file', icon: 'upload', onClick: () => this.importNote() },
     ]);
   }
@@ -292,6 +297,7 @@ export class Library {
     menu(anchor, [
       { label: 'PDF (annotate it)', icon: 'pdf', onClick: () => this.importPDF() },
       { label: 'Images / photos as pages', icon: 'image', onClick: () => this.importImages() },
+      { label: 'Scan document with camera', icon: 'scan', onClick: () => this.scan() },
       { label: 'Inknote note or backup (.json)', icon: 'upload', onClick: () => this.importNote() },
     ]);
   }
@@ -318,6 +324,24 @@ export class Library {
       pd.close();
       this.openNote(meta.id);
     } catch (e) { pd.close(); toast(e.message || 'Could not import images'); }
+  }
+
+  scan() {
+    const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', multiple: true, style: { display: 'none' } });
+    input.addEventListener('change', async () => {
+      const files = [...input.files];
+      input.remove();
+      if (!files.length) return;
+      const pd = progressDialog('Scanning…');
+      try {
+        const pages = await imagesToPages(files, { scan: true });
+        const meta = await createNote({ title: 'Scan ' + new Date().toLocaleDateString(), subjectId: this.currentFolderId(), pages });
+        pd.close();
+        this.openNote(meta.id);
+      } catch (e) { pd.close(); toast(e.message || 'Could not scan'); }
+    });
+    document.body.append(input);
+    input.click();
   }
 
   async importNote() { this.importFiles(await pickFile('.json,application/json', true)); }
@@ -351,6 +375,7 @@ export class Library {
         const t = await promptDialog('Rename note', n.title);
         if (t) { n.title = t; await touchMeta(n); this.render(); }
       } },
+      { label: n.starred ? 'Remove from Favorites' : 'Add to Favorites', icon: 'star', onClick: async () => { n.starred = !n.starred || undefined; if (!n.starred) delete n.starred; await touchMeta(n); this.render(); } },
       { label: 'Move to folder…', icon: 'folder', onClick: () => this.moveMenu(anchor, n) },
       { label: 'Duplicate', icon: 'duplicate', onClick: async () => { await duplicateNote(n); this.refresh(); } },
       { label: 'Export PDF', icon: 'pdf', onClick: async () => {
@@ -444,31 +469,46 @@ export class Library {
     const a = account();
     if (!a) {
       let mode = 'in';
-      const box = h('div', { class: 'set-body' });
+      const box = h('div', { class: 'set-body auth' });
+      const gSlot = h('div', { class: 'google-slot' });
+      const google = h('div', { class: 'google-wrap', hidden: true }, gSlot, h('div', { class: 'auth-or' }, h('span', {}, 'or use email')));
+      this.mountGoogleButton(gSlot, google, () => { toast('Signed in with Google — syncing your notes'); again(); });
       const draw = () => {
         box.innerHTML = '';
-        const email = h('input', { class: 'input', type: 'email', placeholder: 'Email', autocomplete: 'email' });
-        const pass = h('input', { class: 'input', type: 'password', placeholder: 'Password (8+ characters)', autocomplete: mode === 'in' ? 'current-password' : 'new-password' });
-        const name = h('input', { class: 'input', placeholder: 'Your name', autocomplete: 'name' });
+        const email = h('input', { class: 'input', type: 'email', placeholder: 'Email address', autocomplete: 'email', inputmode: 'email' });
+        const pass = h('input', { class: 'input', type: 'password', placeholder: mode === 'in' ? 'Password' : 'Choose a password (8+ characters)', autocomplete: mode === 'in' ? 'current-password' : 'new-password' });
+        const name = h('input', { class: 'input', placeholder: 'Your name (optional)', autocomplete: 'name' });
         const err = h('p', { class: 'err' });
         const go = async () => {
           err.textContent = '';
+          if (!email.value.trim()) { err.textContent = 'Enter your email address'; email.focus(); return; }
+          if (pass.value.length < (mode === 'in' ? 1 : 8)) { err.textContent = mode === 'in' ? 'Enter your password' : 'Password needs at least 8 characters'; pass.focus(); return; }
           btn.disabled = true;
+          btn.textContent = mode === 'in' ? 'Signing in…' : 'Creating account…';
           try {
             if (mode === 'in') await signIn(email.value, pass.value);
             else await signUp(email.value, pass.value, name.value);
             toast('Signed in — syncing your notes');
             again();
+            return;
           } catch (e) { err.textContent = e.message; }
           btn.disabled = false;
+          btn.textContent = mode === 'in' ? 'Sign in' : 'Create account';
         };
-        pass.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-        const btn = h('button', { class: 'btn primary block', onClick: go }, mode === 'in' ? 'Sign in' : 'Create account');
+        for (const i of [email, pass, name]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+        const btn = h('button', { class: 'btn primary block big', onClick: go }, mode === 'in' ? 'Sign in' : 'Create account');
+        const tabs = h('div', { class: 'seg auth-tabs' },
+          h('button', { class: mode === 'in' ? 'on' : '', onClick: () => { mode = 'in'; draw(); } }, 'Sign in'),
+          h('button', { class: mode === 'up' ? 'on' : '', onClick: () => { mode = 'up'; draw(); } }, 'Create account'));
+        const fields = [email, pass];
+        if (mode === 'up') fields.unshift(name);
         box.append(
-          h('div', { class: 'acct-banner', html: icons.cloud }),
-          h('p', { class: 'muted' }, 'Sign in to sync notes between your iPad, phone and computer. Everything keeps working offline — changes sync automatically when you are back online.'),
-          mode === 'up' ? name : null, email, pass, err, btn,
-          h('button', { class: 'link-btn', onClick: () => { mode = mode === 'in' ? 'up' : 'in'; draw(); } }, mode === 'in' ? 'New here? Create a free account' : 'Already have an account? Sign in'));
+          h('div', { class: 'auth-hero' }, h('span', { class: 'auth-ico', html: icons.cloud }),
+            h('h3', {}, mode === 'in' ? 'Welcome back' : 'Create your free account'),
+            h('p', { class: 'muted' }, 'Sync notes between your iPad, phone and computer. Everything keeps working offline and syncs when you are back online.')),
+          google,
+          tabs, ...fields, err, btn,
+          h('p', { class: 'muted small center' }, 'Your notes stay on this device too — signing in only adds sync & backup.'));
       };
       draw();
       return box;
@@ -479,7 +519,7 @@ export class Library {
     const faq = (q, ans) => { const d = h('details', { class: 'set-card faq' }, h('summary', {}, q), h('p', { class: 'muted' }, ans)); return d; };
     return h('div', { class: 'set-body' },
       h('div', { class: 'acct-banner pattern' }),
-      h('div', { class: 'set-card' }, h('div', { class: 'row' }, h('b', { class: 'grow' }, a.user.email)),
+      h('div', { class: 'set-card' }, h('div', { class: 'row' }, h('b', { class: 'grow' }, a.user.email), a.user.google ? h('span', { class: 'chip' }, 'Google') : null),
         h('button', { class: 'link-btn', onClick: async () => {
           await signOut();
           toast('Signed out — your notes stay on this device');
@@ -492,12 +532,34 @@ export class Library {
       h('h4', {}, 'FAQ'),
       faq('How do I sync notes across devices?', 'Sign in with the same email on every device (iPad, phone, computer). Notes, folders, images, PDFs and recordings sync automatically in the background.'),
       faq('Does it work offline?', 'Yes. Everything is saved on the device first. When you reconnect, changes upload and download by themselves.'),
-      faq('What if I edit the same note on two devices?', 'The most recent edit wins for that note. Other notes are not affected.'),
+      faq('What if I edit the same note on two devices?', 'Both sets of changes are kept: when the devices sync, the edits are merged, even if one of them was offline.'),
       h('button', { class: 'link-btn danger', onClick: async () => {
-        const pw = await promptDialog('Delete account', '', { placeholder: 'Enter your password to confirm', ok: 'Delete everything' });
+        const pw = await promptDialog('Delete account', '', { placeholder: a.user.google ? 'Type DELETE to confirm' : 'Enter your password to confirm', ok: 'Delete everything' });
         if (!pw) return;
         try { await deleteAccount(pw); toast('Account deleted. Notes remain on this device.'); again(); } catch (e) { toast(e.message); }
       } }, 'Delete account & cloud data'));
+  }
+
+  // "Continue with Google" — shown when the server has a Google client id.
+  async mountGoogleButton(slot, wrap, done) {
+    const cfg = await serverConfig();
+    if (!cfg.googleClientId) return;
+    try {
+      await loadScript('https://accounts.google.com/gsi/client');
+      const g = window.google && window.google.accounts && window.google.accounts.id;
+      if (!g) return;
+      g.initialize({
+        client_id: cfg.googleClientId,
+        ux_mode: 'popup',
+        callback: async (r) => {
+          try { await signInGoogle(r.credential); done(); } catch (e) { toast(e.message, 4000); }
+        },
+      });
+      wrap.hidden = false;
+      slot.innerHTML = '';
+      const w = Math.min(400, Math.max(220, slot.getBoundingClientRect().width || 320));
+      g.renderButton(slot, { theme: document.documentElement.dataset.theme === 'dark' ? 'filled_black' : 'outline', size: 'large', shape: 'pill', text: 'continue_with', width: w, logo_alignment: 'center' });
+    } catch { wrap.hidden = true; }
   }
 
   set_writing() {
@@ -553,4 +615,15 @@ export class Library {
       ].map(([a, b]) => h('tr', {}, h('td', {}, a), h('td', {}, b)))),
       h('a', { class: 'btn', href: REPO, target: '_blank', rel: 'noopener' }, h('span', { html: icons.github }), 'Source code & issues on GitHub'));
   }
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const sc = document.createElement('script');
+    sc.src = src; sc.async = true;
+    sc.onload = () => resolve();
+    sc.onerror = () => { sc.remove(); reject(new Error('offline')); };
+    document.head.append(sc);
+  });
 }

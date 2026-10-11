@@ -258,6 +258,21 @@ button.act-card:hover { border-color: var(--accent); }
 .set-card { background: var(--panel); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; border: 1px solid var(--line); }
 .set-card.row { display: flex; }
 .faq summary { font-weight: 600; cursor: pointer; }
+.auth { max-width: 420px; display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+.auth .input { height: 48px; font-size: 16px; }
+.auth .err { margin: 0; }
+.auth-hero { text-align: center; padding: 6px 0 4px; }
+.auth-hero h3 { margin: 10px 0 4px; font-size: 22px; letter-spacing: -.02em; }
+.auth-hero p { margin: 0; font-size: 14px; }
+.auth-ico { width: 64px; height: 64px; margin: 0 auto; border-radius: 20px; display: grid; place-items: center; color: var(--accent); background: linear-gradient(135deg, #dfe8ff, #fbe6db); }
+.auth-ico svg { width: 34px; height: 34px; }
+.google-slot { display: flex; justify-content: center; min-height: 44px; }
+.auth-or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.auth-tabs { display: flex; }
+.auth-tabs button { flex: 1; }
+.btn.big { height: 48px; font-size: 16px; }
+.center { text-align: center; }
 .acct-banner { height: 120px; border-radius: 16px; background: linear-gradient(135deg, #dfe8ff, #fbe6db); display: grid; place-items: center; color: var(--accent); margin-bottom: 14px; }
 .acct-banner svg { width: 54px; height: 54px; }
 .acct-banner.pattern { background: radial-gradient(circle at 20% 30%, #f6b48a 0 18px, transparent 19px), radial-gradient(circle at 70% 60%, #9db6ff 0 24px, transparent 25px), radial-gradient(circle at 45% 80%, #ffd96a 0 14px, transparent 15px), linear-gradient(135deg, #f5ead9, #e8eeff); }
@@ -379,3 +394,64 @@ button.act-card:hover { border-color: var(--accent); }
   .sync-pill { padding: 0 6px; }
 }
 @media print { .ed-top, .ed-toolbar, .audio-bar { display: none; } }
+
+/* ---------- toolbox, zoom window, favourites ---------- */
+.toolbox-pop { width: 100%; }
+.popover.wide:has(.toolbox-pop) { width: min(500px, calc(100vw - 16px)); }
+.toolbox-pop h4, .emoji-pop h4, .tips-pop h4 { margin: 4px 4px 10px; }
+.tb-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.tb-tile { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 12px 6px 10px; border-radius: 14px; background: var(--panel-2); border: 1px solid transparent; text-align: center; min-height: 104px; }
+.tb-tile:hover { border-color: var(--accent); }
+.tb-tile.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.tb-tile b { font-size: 13.5px; }
+.tb-tile small { font-size: 11px; color: var(--muted); line-height: 1.25; }
+.tb-ico { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--panel); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+@media (max-width: 520px) { .tb-tiles { grid-template-columns: repeat(2, 1fr); } }
+.zoom-panel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; height: clamp(170px, 34%, 300px); display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0,0,0,.12); padding-bottom: var(--safe-b); }
+.zoom-bar { display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-bottom: 1px solid var(--line); flex: none; }
+.zoom-cv { flex: 1; width: 100%; min-height: 0; touch-action: none; display: block; cursor: crosshair; }
+.chip.sm { height: 28px; font-size: 12px; }
+.tb-group.presets { gap: 4px; }
+.tb-group.presets:empty { display: none; }
+.preset { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); border: 1.5px solid var(--line); flex: none; }
+.preset.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.preset.add { color: var(--muted); border-style: dashed; }
+.preset.add svg { width: 16px; height: 16px; }
+.preset-dot { border-radius: 50%; display: block; }
+.preset-dot.hl, .preset-dot.tape { border-radius: 3px; opacity: .85; }
+.tape-dot { display: block; border-radius: 2px; }
+.seg.wrap { flex-wrap: wrap; }
+.emoji-pop { width: 100%; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; max-height: 50vh; overflow-y: auto; }
+.emoji { font-size: 26px; height: 46px; border-radius: 10px; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.emoji:hover { background: var(--hover); }
+.find-pop { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.find-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; }
+.find-row { display: flex; gap: 10px; text-align: left; padding: 9px 8px; border-radius: 9px; font-size: 14px; }
+.find-row:hover { background: var(--hover); }
+.find-pg { flex: none; min-width: 32px; font-size: 12px; font-weight: 700; color: var(--accent); padding-top: 1px; }
+.tips-pop { width: 100%; }
+.tip { display: flex; gap: 12px; align-items: flex-start; padding: 6px 4px; }
+.tip span { color: var(--accent); flex: none; }
+.tip p { margin: 1px 0 0; font-size: 14px; }
+.tips-pop .btn { margin-top: 10px; }
+.lock-btn { color: #b4690e; }
+.pp-filter { align-self: flex-start; margin: 0 4px; }
+.pp-thumb.bm { box-shadow: inset 0 0 0 2px #f5b400; }
+.card-title .star { display: inline-block; vertical-align: -3px; margin-right: 4px; color: #f5b400; }
+.card-title .star svg { width: 15px; height: 15px; }
+/* library list view */
+.grid.list { grid-template-columns: 1fr; gap: 6px; }
+.grid.list .card { flex-direction: row; align-items: center; gap: 14px; padding: 6px; border-radius: 12px; }
+.grid.list .card:hover { background: var(--hover); }
+.grid.list .card-open { width: 56px; flex: none; }
+.grid.list .thumb { border-radius: 8px; }
+.grid.list .card-meta { flex: 1; align-items: center; }
+.grid.list .card-title { font-size: 15.5px; }
+/* friendlier touch targets on tablets */
+@media (pointer: coarse) {
+  .tool-btn { width: 46px; height: 44px; }
+  .swatch { width: 30px; height: 30px; }
+  .size-btn { min-width: 38px; height: 38px; }
+}
+.google-wrap { display: flex; flex-direction: column; gap: 12px; }

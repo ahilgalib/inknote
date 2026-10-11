@@ -187,7 +187,7 @@ export async function pdfToPages(file, onProgress) {
 }
 
 // Images as pages (photos of a whiteboard, scans…)
-export async function imagesToPages(files) {
+export async function imagesToPages(files, { scan = false } = {}) {
   const pages = [];
   for (const f of files) {
     const bmp = await createImageBitmap(f).catch(() => null);
@@ -196,11 +196,35 @@ export async function imagesToPages(files) {
     const c = document.createElement('canvas');
     c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    if (scan) enhanceScan(c);
     const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88));
     const w = 816, h = Math.round(816 * bmp.height / bmp.width);
     pages.push(newPage({ w, h, template: 'blank', color: '#ffffff', bg: await putAsset(uid(), blob) }));
   }
   return pages;
+}
+
+// Make a photo of paper look scanned: stretch the brightness so the paper turns
+// white and the ink dark, and remove most of the colour cast.
+function enhanceScan(c) {
+  const ctx = c.getContext('2d');
+  const img = ctx.getImageData(0, 0, c.width, c.height), d = img.data;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 16) hist[(d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 | 0]++;
+  const total = hist.reduce((a, b) => a + b, 0);
+  let acc = 0, lo = 0, hi = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc > total * 0.02) { lo = v; break; } }
+  acc = 0;
+  for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > total * 0.12) { hi = v; break; } }
+  const span = Math.max(30, hi - lo);
+  for (let i = 0; i < d.length; i += 4) {
+    const l = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+    const t = Math.min(1, Math.max(0, (l - lo) / span));
+    const v = 255 * Math.pow(t, 1.35);
+    // keep a little of the original colour so coloured ink stays readable
+    for (let k = 0; k < 3; k++) d[i + k] = Math.min(255, Math.max(0, v + (d[i + k] - l) * 0.45 * (1 - t)));
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
 // ---- note files & backup ---------------------------------------------------

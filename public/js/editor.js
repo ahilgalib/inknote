@@ -3,7 +3,8 @@
 import { h, uid, clamp, debounce, toast, fmtTime, pickFile, saveFile, safeName, loadImage } from './util.js';
 import { icons } from './icons.js';
 import { settings, saveSettings, fingerDraws, applyTheme } from './settings.js';
-import { drawStroke, drawLiveStroke, itemBBox, invalidate, strokeHit, strokeHitSegment, splitStroke, lassoHit, transformItem, round2, inkColor } from './ink.js';
+import { drawStroke, drawLiveStroke, itemBBox, invalidate, strokeHit, strokeHitSegment, splitStroke, lassoHit, transformItem, round2, inkColor, openTapes } from './ink.js';
+import { toolboxMethods, STICKY_COLORS } from './toolbox.js';
 import { recognize } from './shapes.js';
 import { drawPage, drawItems, measureText, renderPageCanvas, fontFor, drawImageItem, visualBBox } from './render.js';
 import { PAPERS, PLANNERS, PAPER_COLORS, SIZES, ACCENTS, templatePreview, isDarkPaper, plannerById, plannerPaperColor, templateLabel, TEMPLATE_FONTS } from './templates.js';
@@ -11,7 +12,7 @@ import { putAsset, assetURL, db, getAssetBlob } from './db.js';
 import { saveNote, makeThumb, newPage, exportNotePDF, exportNoteFile, pdfToPages, imagesToPages, bodyIds, mergeBodies } from './notes.js';
 import { onStatus } from './sync.js';
 import { importPDF } from './pdf.js';
-import { popover, menu, closePopover, confirmDialog, progressDialog, colorPopover, sliderPopover } from './ui.js';
+import { popover, menu, closePopover, confirmDialog, progressDialog, colorPopover, sliderPopover, promptDialog } from './ui.js';
 import { fontStack, loadFont } from './fonts.js';
 import { fontPicker } from './fontpicker.js';
 import { templateGallery } from './gallery.js';
@@ -23,11 +24,13 @@ const MAX_CACHE = matchMedia('(pointer: coarse)').matches ? 4 : 6;
 const HOLD_MS = 520;     // draw-and-hold → shape
 const CLIP_PREFIX = 'inknote-clip:';
 const DARK_PAPER = '#141416';
+const PEN_STYLES = [['fountain', 'Fountain'], ['ball', 'Ballpoint'], ['calli', 'Calligraphy'], ['pencil', 'Pencil'], ['dash', 'Dashed'], ['dot', 'Dotted']];
+const DRAW_TOOLS = ['pen', 'hl', 'laser', 'tape'];
 let clipboard = null;    // { id, items } shared between notes
 
 const TOOLS = [
   ['pen', 'Pen', 'P', 'pen'], ['hl', 'Highlighter', 'H', 'highlighter'], ['eraser', 'Eraser', 'E', 'eraser'],
-  ['lasso', 'Lasso', 'L', 'lasso'], ['text', 'Text', 'T', 'text'], ['laser', 'Laser pointer', 'K', 'laser'], ['hand', 'Scroll', 'Space', 'hand'],
+  ['lasso', 'Lasso', 'L', 'lasso'], ['text', 'Text', 'T', 'text'], ['hand', 'Scroll', 'Space', 'hand'],
 ];
 
 export class Editor {
@@ -80,6 +83,8 @@ export class Editor {
       this.titleInput,
       h('div', { class: 'grow' }),
       this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
+      this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'),
+      this.findAnchor = btn('search', 'Find in note (Ctrl+F)', () => this.findPanel()),
       this.recBtn,
       this.themeBtn = btn('moon', 'Dark / light pages', () => this.toggleDarkMode()),
       btn('template', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
@@ -92,14 +97,17 @@ export class Editor {
       const b = h('button', { class: 'tool-btn', title: `${label} (${key})`, 'aria-label': label, onClick: () => this.toolTap(id), html: icons[icon] });
       this.toolBtns[id] = b;
       return b;
-    }), h('button', { class: 'tool-btn', title: 'Insert photo, camera, audio, PDF…', 'aria-label': 'Insert', onClick: (e) => this.insertMenu(e.currentTarget), html: icons.image }));
+    }),
+    this.toolboxBtn = h('button', { class: 'tool-btn', title: 'Toolbox: zoom, tape, ruler, laser, stickers…', 'aria-label': 'Toolbox', onClick: (e) => this.toolboxMenu(e.currentTarget), html: icons.toolbox }),
+    h('button', { class: 'tool-btn', title: 'Insert photo, camera, audio, PDF…', 'aria-label': 'Insert', onClick: (e) => this.insertMenu(e.currentTarget), html: icons.image }));
+    this.presetsEl = h('div', { class: 'tb-group presets' });
 
     this.undoBtn = btn('undo', 'Undo (2-finger tap)', () => this.undo());
     this.redoBtn = btn('redo', 'Redo (3-finger tap)', () => this.redo());
     this.optsEl = h('div', { class: 'tb-group opts' });
     const toolbar = h('div', { class: 'ed-toolbar' },
       h('div', { class: 'tb-group' }, this.undoBtn, this.redoBtn),
-      h('div', { class: 'tb-sep' }), tools, h('div', { class: 'tb-sep' }), this.optsEl);
+      h('div', { class: 'tb-sep' }), tools, h('div', { class: 'tb-sep' }), this.presetsEl, this.optsEl);
 
     this.main = h('canvas', { class: 'cv-main' });
     this.liveCv = h('canvas', { class: 'cv-live' });
@@ -164,6 +172,8 @@ export class Editor {
   mount(parent) {
     parent.append(this.el);
     this.resize();
+    this.lockBtn.hidden = !this.meta.locked;
+    if (!settings.tipsSeen) setTimeout(() => { if (this.el.isConnected) this.showTips(this.toolboxBtn); }, 700);
   }
 
   resize() {
@@ -182,6 +192,7 @@ export class Editor {
     if (!this.inited) { this.inited = true; this.fitWidth(true); }
     else if (prevW && Math.abs(prevW - this.vw) > 40) this.fitWidth(false); // rotation / split view
     else this.clampCam();
+    if (this.zoom) this.layoutZoom();
     this.requestRender();
   }
 
@@ -389,15 +400,19 @@ export class Editor {
   markDirty(page) {
     const c = page && this.caches.get(page.id);
     if (c) c.dirty = true;
+    if (this.zoom && (!page || this.zoom.o.page === page)) this.zoom.cache = null;
     this.requestRender();
   }
 
-  markAllDirty() { for (const c of this.caches.values()) c.dirty = true; this.requestRender(); }
+  markAllDirty() { for (const c of this.caches.values()) c.dirty = true; if (this.zoom) this.zoom.cache = null; this.requestRender(); }
 
   // A freshly committed stroke is painted straight onto the cached bitmap and
   // onto the screen, so lifting the pen never triggers a full page redraw.
   paintCommitted(o, item) {
     const page = o.page;
+    if (this.zoom && this.zoom.o === o) this.zoom.cache = null;
+    // tape always stays on top: repaint the page when ink goes under it
+    if (item.tool !== 'tape' && page.items.some((i) => i.tool === 'tape')) { this.markDirty(page); return; }
     const dark = isDarkPaper(page.color) && !page.bg;
     const c = this.caches.get(page.id);
     if (c && !c.dirty && !this.playback) {
@@ -548,6 +563,9 @@ export class Editor {
       }
       ctx.restore();
     }
+    if (this.zoom) this.drawZoomBox(ctx);
+    if (this.ruler) this.drawRuler(ctx);
+    if (this.zoom) this.drawZoom();
     if (this.hover && (this.tool === 'eraser' || this.eraserOverride)) {
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       ctx.beginPath();
@@ -586,7 +604,7 @@ export class Editor {
 
   flashIndicator(text) {
     const i = this.currentIndex();
-    this.pageInd.textContent = text || `${i + 1} / ${this.pages.length}`;
+    this.pageInd.textContent = text || `${this.pages[i] && this.pages[i].bookmark ? '🔖 ' : ''}${i + 1} / ${this.pages.length}`;
     this.pageInd.classList.add('show');
     clearTimeout(this.indTimer);
     this.indTimer = setTimeout(() => this.pageInd.classList.remove('show'), 900);
@@ -612,6 +630,18 @@ export class Editor {
     try { this.liveCv.setPointerCapture(e.pointerId); } catch {}
     const pos = this.localPos(e);
     const p = { id: e.pointerId, type: e.pointerType, sx: pos.x, sy: pos.y, x0: pos.x, y0: pos.y, t0: performance.now(), role: null };
+    if (this.eyedrop) { this.pickColorAt(pos); return; }
+    // fingers / mouse move the ruler and the zoom box (the Pencil draws along them)
+    if (e.pointerType !== 'pen' && !this.gesturePointers().length) {
+      const rh = this.ruler && this.rulerHit(pos.x, pos.y);
+      if (rh) { p.role = 'ruler'; this.pointers.set(p.id, p); this.startRulerDrag(rh, p); return; }
+      if (this.zoom && this.zoomBoxHit(pos.x, pos.y)) {
+        const d = this.screenToDoc(pos.x, pos.y), Z = this.zoom;
+        p.role = 'zoombox'; p.zb = { x: d.x, y: d.y, bx: Z.x, by: Z.y };
+        this.pointers.set(p.id, p);
+        return;
+      }
+    }
 
     if (e.pointerType === 'pen' && !settings.penSeen) {
       settings.penSeen = true;
@@ -668,6 +698,21 @@ export class Editor {
       return;
     }
     e.preventDefault();
+    if (p.role === 'ruler' || p.role === 'zoombox') {
+      const pos = this.localPos(e);
+      p.sx = pos.x; p.sy = pos.y;
+      if (p.role === 'ruler') this.moveRulerDrag(p);
+      else {
+        const d = this.screenToDoc(pos.x, pos.y), Z = this.zoom;
+        if (Z) {
+          Z.x = clamp(p.zb.bx + d.x - p.zb.x, 0, Math.max(0, Z.o.page.w - Z.w));
+          Z.y = clamp(p.zb.by + d.y - p.zb.y, 0, Math.max(0, Z.o.page.h - Z.h));
+          Z.margin = Z.x; Z.cache = null;
+          this.requestLive();
+        }
+      }
+      return;
+    }
     if (p.role === 'gesture') {
       const pos = this.localPos(e);
       p.sx = pos.x; p.sy = pos.y;
@@ -691,7 +736,9 @@ export class Editor {
     if (e.pointerType === 'pen') { this.penActive = false; this.hover = null; }
     if (!p) return;
     this.pointers.delete(e.pointerId);
-    if (p.role === 'gesture') this.endGesture(p, cancelled);
+    if (p.role === 'ruler') this.rulerDrag = null;
+    else if (p.role === 'zoombox') { if (this.zoom) this.zoomVisible(); }
+    else if (p.role === 'gesture') this.endGesture(p, cancelled);
     else if (p.role === 'draw') this.endTool(p, cancelled && p.type === 'touch');
     if (e.pointerType === 'touch' && this.tool === 'eraser') this.hover = null;
     this.requestLive();
@@ -850,6 +897,11 @@ export class Editor {
   startTool(p, e) {
     const d = this.screenToDoc(p.sx, p.sy);
     const t = this.activeTool();
+    if (this.meta.locked && t !== 'laser' && t !== 'hand') {
+      p.role = 'none';
+      if (!this.lockToast || performance.now() - this.lockToast > 2500) { this.lockToast = performance.now(); toast('This note is locked — tap the lock to edit'); }
+      return;
+    }
     if (this.textEdit && t !== 'text') this.commitText();
     // a selection can be moved / resized / rotated whatever tool is active
     if (this.selection && t !== 'laser' && !this.eraserOverride) {
@@ -863,15 +915,19 @@ export class Editor {
       const it = o && this.itemAt(o, d.x - o.x, d.y - o.y, ['text', 'image', 'audio']);
       if (it) { this.press = { o, item: it, sx: p.sx, sy: p.sy }; return; }
     }
-    if (t === 'pen' || t === 'hl' || t === 'laser') {
+    if (DRAW_TOOLS.includes(t)) {
       const o = this.pageAt(d.x, d.y, t === 'laser' ? 2000 : 0);
       if (!o) { p.role = 'none'; return; }
       if (this.selection) this.clearSelection();
-      const lx = d.x - o.x, ly = d.y - o.y;
+      const size = this.currentSize(t);
+      // start near the ruler: the stroke follows its edge
+      const edge = t !== 'laser' && this.rulerEdgeFor(d.x, d.y, size);
+      let lx = d.x - o.x, ly = d.y - o.y;
+      if (edge) { const q = this.snapToEdge(edge, d.x, d.y); lx = q.x - o.x; ly = q.y - o.y; }
       const pr = this.pressure(e, null);
       const L = {
         o, pid: p.id, tool: t, style: t === 'pen' ? (this.toolCfg('pen').style || 'fountain') : undefined,
-        color: this.currentColor(t), size: this.currentSize(t),
+        color: this.currentColor(t), size, edge: edge || null, straight: t === 'hl' && !!this.toolCfg('hl').straight,
         pts: [round2(lx), round2(ly), pr], lastP: pr, sx: lx, sy: ly, raw: { x: lx, y: ly },
         holdRef: { x: p.sx, y: p.sy }, startT: performance.now(), shape: false, pen: e.pointerType === 'pen',
       };
@@ -908,7 +964,15 @@ export class Editor {
     const L = this.live || (this.laser && this.laser.pid === p.id ? this.laser : null);
     if (L) {
       if (L.shape) return;
-      const lx = d.x - L.o.x, ly = d.y - L.o.y;
+      let lx = d.x - L.o.x, ly = d.y - L.o.y;
+      if (L.edge) { const q = this.snapToEdge(L.edge, d.x, d.y); lx = q.x - L.o.x; ly = q.y - L.o.y; }
+      if (L.straight) {
+        // straight highlighter: a clean line from start to here
+        L.raw = { x: lx, y: ly };
+        L.pts = [L.pts[0], L.pts[1], L.pts[2], round2(lx), round2(ly), L.pts[2]];
+        L.sx = lx; L.sy = ly;
+        return;
+      }
       if (Math.hypot(lx - L.raw.x, ly - L.raw.y) < 0.6 / this.cam.s) return;
       L.raw = { x: lx, y: ly };
       // pressure is smoothed so the line width never "shivers"
@@ -919,7 +983,7 @@ export class Editor {
       L.sx += (lx - L.sx) * k; L.sy += (ly - L.sy) * k;
       L.pts.push(round2(L.sx), round2(L.sy), Math.round(pr * 1000) / 1000);
       L.lastP = pr;
-      if (L.tool !== 'laser' && Math.hypot(p.sx - L.holdRef.x, p.sy - L.holdRef.y) > 5) {
+      if (L.tool !== 'laser' && !L.edge && Math.hypot(p.sx - L.holdRef.x, p.sy - L.holdRef.y) > 5) {
         L.holdRef = { x: p.sx, y: p.sy };
         this.armHold();
       }
@@ -978,7 +1042,7 @@ export class Editor {
     if (!settings.shapeHold) return;
     this.holdTimer = setTimeout(() => {
       const L = this.live;
-      if (!L || L.shape || L.pts.length < 18) return;
+      if (!L || L.shape || L.edge || L.straight || L.tool === 'tape' || L.pts.length < 18) return;
       const shape = recognize(L.pts);
       if (!shape) return;
       L.shape = true;
@@ -995,11 +1059,13 @@ export class Editor {
     const tap = Math.hypot(p.sx - p.x0, p.sy - p.y0) < 6 && performance.now() - p.t0 < 350;
     if (this.playback && tap && this.seekToStrokeAt(L.o, L.pts[0], L.pts[1])) { this.requestLive(); return; }
     if (tap && L.tool !== 'laser') {
+      const tape = this.tapeAt(L.o, L.pts[0], L.pts[1]);
+      if (tape) { this.toggleTape(L.o, tape); this.requestLive(); return; }
       const hit = this.itemAt(L.o, L.pts[0], L.pts[1], p.type === 'pen' ? ['audio'] : ['image', 'audio', 'text']);
       if (hit) { this.tapItem(L.o, hit, 'pen'); this.requestLive(); return; }
     }
     let pts = L.pts;
-    if (!L.shape && pts.length > 3) {
+    if (!L.shape && !L.straight && pts.length > 3) {
       const n = pts.length;
       if (Math.hypot(pts[n - 3] - L.raw.x, pts[n - 2] - L.raw.y) > 0.3) pts = pts.concat([round2(L.raw.x), round2(L.raw.y), L.lastP]);
     }
@@ -1009,6 +1075,7 @@ export class Editor {
     if (this.rec) { item.rec = this.rec.id; item.t = Math.round(L.startT - this.rec.start); }
     const page = L.o.page;
     page.items.push(item);
+    this.lastStroke = item;
     this.pushOp({ kind: 'items', page: page.id, add: [structuredClone(item)], remove: [] });
     this.paintCommitted(L.o, item);
     if (settings.autoAddPage && page === this.pages[this.pages.length - 1] && !page.bg) {
@@ -1283,6 +1350,8 @@ export class Editor {
   tapAt(pt) {
     const d = this.screenToDoc(pt.x, pt.y);
     const o = this.pageAt(d.x, d.y);
+    const tape = o && this.tapeAt(o, d.x - o.x, d.y - o.y);
+    if (tape) { this.toggleTape(o, tape); return; }
     const it = o && this.itemAt(o, d.x - o.x, d.y - o.y, ['image', 'audio', 'text']);
     if (it) this.tapItem(o, it, 'finger');
     else if (this.selection) this.clearSelection();
@@ -1324,8 +1393,11 @@ export class Editor {
         b('duplicate', 'Duplicate', () => this.duplicateSelection()),
         b('trash', 'Delete', () => this.deleteSelection(), 'danger'));
     } else {
-      m.append(
+      const closed = items.filter((i) => i.type === 'stroke' && i.closed);
+      m.append(...[
         one && one.type === 'text' ? b('text', 'Edit', () => { const o = this.selection.o; this.clearSelection(); this.editText(o, one, false); }) : null,
+        one && one.type === 'text' && one.bg ? b('note', 'Note colour', () => this.updateSelected((it) => { it.bg = STICKY_COLORS[(STICKY_COLORS.indexOf(it.bg) + 1) % STICKY_COLORS.length]; })) : null,
+        closed.length ? b('fill', closed.every((i) => i.fill) ? 'Fill ✓' : 'Fill', () => { const on = !closed.every((i) => i.fill); this.updateSelected((it) => { if (it.type === 'stroke' && it.closed) it.fill = on || undefined; }); }) : null,
         b('palette', 'Colour', (e) => colorPopover(e.currentTarget, items.find((i) => i.color)?.color || '#000000', (c, final) => { if (final) this.recolorSelection(c); })),
         b('duplicate', 'Duplicate', () => this.duplicateSelection()),
         b('copy', 'Copy', () => this.copySelection()),
@@ -1333,7 +1405,11 @@ export class Editor {
         b('rotate', 'Rotate', () => this.rotateSelection(Math.PI / 2)),
         b('up', 'Front', () => this.reorderSelection(1)),
         b('down', 'Back', () => this.reorderSelection(-1)),
-        b('trash', 'Delete', () => this.deleteSelection(), 'danger'));
+        b('trash', 'Delete', () => this.deleteSelection(), 'danger')].filter(Boolean));
+    }
+    if (this.meta.locked) {
+      m.innerHTML = '';
+      m.append(b('copy', 'Copy', () => this.copySelection()), b('lock', 'Locked', () => this.toggleLock()));
     }
     m.hidden = false;
     this.positionSelMenu();
@@ -1486,6 +1562,7 @@ export class Editor {
   handlePasteEvent(e) {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    if (this.meta.locked) { toast('This note is locked'); return; }
     const dt = e.clipboardData;
     if (!dt) return;
     e.preventDefault();
@@ -1643,7 +1720,8 @@ export class Editor {
     ta.style.lineHeight = '1.3';
     ta.style.textAlign = item.align || 'left';
     ta.style.textDecoration = item.underline ? 'underline' : 'none';
-    ta.style.color = inkColor(item.color, isDarkPaper(o.page.color) && !o.page.bg);
+    ta.style.color = inkColor(item.color, item.bg ? false : isDarkPaper(o.page.color) && !o.page.bg);
+    ta.style.background = item.bg || 'transparent';
     this.sizeTextarea();
   }
 
@@ -1741,12 +1819,16 @@ export class Editor {
   }
 
   insertMenu(anchor) {
+    if (this.meta.locked) { toast('This note is locked'); return; }
     menu(anchor, [
       { label: 'Photo or image…', icon: 'image', onClick: () => this.pickImages() },
       { label: 'Take photo', icon: 'camera', onClick: () => this.takePhoto() },
       { label: 'Audio file…', icon: 'audio', onClick: () => this.pickAudio() },
       { label: this.rec ? 'Stop recording' : 'Record audio', icon: 'mic', onClick: () => this.toggleRecord() },
       { label: 'Text box', icon: 'text', onClick: () => this.setTool('text') },
+      { label: 'Sticky note', icon: 'note', onClick: () => this.addSticky() },
+      { label: 'Stickers…', icon: 'sparkle', onClick: () => this.stickerPicker(anchor) },
+      { label: 'Scan document', icon: 'scan', onClick: () => this.scanDocument() },
       { label: 'Paste', icon: 'paste', onClick: () => this.paste() },
       '-',
       { label: 'New pictures look like stickers', checked: settings.stickerImages !== false, onClick: () => { settings.stickerImages = settings.stickerImages === false; saveSettings(); } },
@@ -1758,6 +1840,7 @@ export class Editor {
 
   async onDrop(e) {
     e.preventDefault();
+    if (this.meta.locked) { toast('This note is locked'); return; }
     const files = [...(e.dataTransfer?.files || [])];
     const r = this.liveCv.getBoundingClientRect();
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -1768,7 +1851,22 @@ export class Editor {
     if (text) this.insertTextBox(text, at);
   }
 
-  async insertImages(files, at, { sticker = settings.stickerImages !== false } = {}) {
+  // Camera → cleaned-up page (whiter paper, darker ink), like a document scanner.
+  scanDocument() {
+    const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', multiple: true, style: { display: 'none' } });
+    input.addEventListener('change', async () => {
+      const files = [...input.files];
+      input.remove();
+      if (!files.length) return;
+      const pd = progressDialog('Scanning…');
+      try { this.insertPagesAfterCurrent(await imagesToPages(files, { scan: true })); } catch (e) { toast(e.message || 'Could not scan'); }
+      pd.close();
+    });
+    document.body.append(input);
+    input.click();
+  }
+
+  async insertImages(files, at, { sticker = settings.stickerImages !== false, width = 0 } = {}) {
     const d = at ? this.screenToDoc(at.x, at.y) : this.screenToDoc(this.vw / 2, this.vh / 2);
     const o = this.pageAt(d.x, d.y) || this.lay[this.currentIndex()];
     const page = o.page;
@@ -1780,7 +1878,7 @@ export class Editor {
         const img = await loadImage(await assetURL(id));
         this.images.set(id, img);
         const ratio = img.naturalHeight / img.naturalWidth;
-        let w = Math.min(img.naturalWidth, page.w * 0.6);
+        let w = width || Math.min(img.naturalWidth, page.w * 0.6);
         let hh = w * ratio;
         if (hh > page.h * 0.6) { hh = page.h * 0.6; w = hh / ratio; }
         const off = added.length * 24;
@@ -1990,16 +2088,20 @@ export class Editor {
     P.append(h('div', { class: 'pp-head' },
       h('strong', {}, `Pages (${this.pages.length})`),
       h('div', { class: 'grow' }),
-      act('close', 'Close', () => this.togglePagesPanel())));
+      act('close', 'Close', () => this.togglePagesPanel())),
+    h('div', { class: 'seg pp-filter' }, [['all', 'All'], ['bm', 'Bookmarks']].map(([v, l]) =>
+      h('button', { class: (this.ppFilter || 'all') === v ? 'on' : '', onClick: () => { this.ppFilter = v; this.renderPagesPanel(); } }, l))));
     const list = h('div', { class: 'pp-list' });
     this.pages.forEach((page, i) => {
-      const thumb = h('div', { class: 'pp-thumb' + (i === cur ? ' current' : ''), style: { aspectRatio: `${page.w} / ${page.h}` } });
+      if (this.ppFilter === 'bm' && !page.bookmark) return;
+      const thumb = h('div', { class: 'pp-thumb' + (i === cur ? ' current' : '') + (page.bookmark ? ' bm' : ''), style: { aspectRatio: `${page.w} / ${page.h}` } });
       renderPageCanvas(page, 150 / page.w).then((c) => thumb.append(c));
       list.append(h('div', { class: 'pp-item' },
         h('button', { class: 'pp-open', onClick: () => { this.scrollToPage(i); this.renderPagesPanel(); } }, thumb, h('span', { class: 'pp-num' }, String(i + 1))),
         h('div', { class: 'pp-actions' },
           act('up', 'Move up', () => this.movePage(i, -1)),
           act('down', 'Move down', () => this.movePage(i, 1)),
+          act(page.bookmark ? 'bookmarkOn' : 'bookmark', page.bookmark ? 'Remove bookmark' : 'Bookmark page', () => this.toggleBookmark(i)),
           act('duplicate', 'Duplicate page', () => this.duplicatePage(i)),
           act('trash', 'Delete page', () => this.deletePage(i)))));
     });
@@ -2152,9 +2254,30 @@ export class Editor {
       { label: 'Draw with finger: Off', checked: fd === 'off', onClick: () => this.setFinger('off') },
       { label: 'Eraser returns to pen', checked: settings.eraserAutoDeselect, onClick: () => { settings.eraserAutoDeselect = !settings.eraserAutoDeselect; saveSettings(); } },
       { label: 'Gestures help', icon: 'hand', onClick: () => this.gestureHelp() },
+      { label: 'Quick tips', icon: 'help', onClick: () => this.showTips(anchor) },
+      '-',
+      { label: this.pages[this.currentIndex()].bookmark ? 'Remove bookmark' : 'Bookmark this page', icon: 'bookmark', onClick: () => this.toggleBookmark() },
+      { label: 'Go to page…', icon: 'pages', onClick: () => this.goToPage() },
+      { label: 'Find in note', icon: 'search', onClick: () => this.findPanel() },
+      { label: this.meta.locked ? 'Unlock note' : 'Lock note (read only)', icon: this.meta.locked ? 'unlock' : 'lock', onClick: () => this.toggleLock() },
       '-',
       { label: 'Delete this page', icon: 'trash', danger: true, onClick: () => this.deletePage() },
     ]);
+  }
+
+  toggleLock() {
+    this.meta.locked = !this.meta.locked || undefined;
+    if (!this.meta.locked) delete this.meta.locked;
+    if (this.meta.locked) { this.commitText(); this.clearSelection(); }
+    this.lockBtn.hidden = !this.meta.locked;
+    this.changed();
+    toast(this.meta.locked ? 'Note locked — read only' : 'Note unlocked');
+  }
+
+  async goToPage() {
+    const v = await promptDialog('Go to page', String(this.currentIndex() + 1), { placeholder: `1 – ${this.pages.length}`, ok: 'Go' });
+    const n = parseInt(v, 10);
+    if (n >= 1 && n <= this.pages.length) this.scrollToPage(n - 1);
   }
 
   gestureHelp() {
@@ -2250,7 +2373,7 @@ export class Editor {
     if (t === 'pen') {
       const cfg = this.toolCfg('pen');
       popover(anchor, h('div', { class: 'opt-pop' }, h('h4', {}, 'Pen style'),
-        h('div', { class: 'seg' }, [['fountain', 'Fountain'], ['ball', 'Ballpoint'], ['dash', 'Dashed']].map(([v, l]) =>
+        h('div', { class: 'seg wrap' }, PEN_STYLES.map(([v, l]) =>
           h('button', { class: cfg.style === v ? 'on' : '', onClick: () => { cfg.style = v; saveSettings(); closePopover(); this.renderToolbar(); } }, l))),
         h('label', { class: 'toggle' }, h('span', {}, h('b', {}, 'Pressure sensitivity')), (() => { const c = h('input', { type: 'checkbox', checked: settings.pressure }); c.onchange = () => { settings.pressure = c.checked; saveSettings(); }; return c; })()),
         h('label', { class: 'toggle' }, h('span', {}, h('b', {}, 'Draw & hold for shapes')), (() => { const c = h('input', { type: 'checkbox', checked: settings.shapeHold }); c.onchange = () => { settings.shapeHold = c.checked; saveSettings(); }; return c; })())));
@@ -2265,6 +2388,8 @@ export class Editor {
 
   renderToolbar() {
     for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('on', id === this.tool);
+    this.toolboxBtn.classList.toggle('on', this.tool === 'tape' || this.tool === 'laser' || !!this.zoom || !!this.ruler);
+    this.renderPresets(this.presetsEl);
     const O = this.optsEl;
     O.innerHTML = '';
     const t = this.tool;
@@ -2293,7 +2418,16 @@ export class Editor {
       swatches();
       O.append(h('div', { class: 'tb-sep sm' }));
       sizes((sz) => { const d = Math.min(22, 3 + (t === 'hl' ? sz / 2 : sz * 2.4)); return h('span', { class: 'size-dot', style: { width: d + 'px', height: d + 'px', background: t === 'pen' ? inkColor(cfg.colors[cfg.color], this.curDark()) : cfg.colors[cfg.color], opacity: t === 'hl' ? 0.6 : 1 } }); });
-      if (t === 'pen') O.append(h('button', { class: 'chip', onClick: () => this.toolOptions('pen') }, { fountain: 'Fountain', ball: 'Ballpoint', dash: 'Dashed' }[cfg.style || 'fountain']));
+      if (t === 'pen') O.append(h('button', { class: 'chip', onClick: () => this.toolOptions('pen') }, (PEN_STYLES.find((x) => x[0] === (cfg.style || 'fountain')) || PEN_STYLES[0])[1]));
+      if (t === 'hl') O.append(h('button', { class: 'chip' + (cfg.straight ? ' on' : ''), title: 'Highlight in straight lines', onClick: () => { cfg.straight = !cfg.straight; saveSettings(); this.renderToolbar(); } }, 'Straight'));
+      O.append(h('button', { class: 'size-btn', title: 'Eyedropper: pick a colour from the page', 'aria-label': 'Eyedropper', html: icons.dropper, onClick: () => this.startEyedropper() }));
+    } else if (t === 'tape') {
+      swatches();
+      O.append(h('div', { class: 'tb-sep sm' }));
+      sizes((sz) => h('span', { class: 'tape-dot', style: { width: Math.min(26, 8 + sz / 2) + 'px', height: Math.min(14, 4 + sz / 4) + 'px', background: cfg.colors[cfg.color] } }));
+      O.append(h('button', { class: 'chip', onClick: () => this.setAllTapes(true) }, 'Reveal all'),
+        h('button', { class: 'chip', onClick: () => this.setAllTapes(false) }, 'Cover all'),
+        h('span', { class: 'hint' }, 'Draw tape over answers · tap a tape to peek'));
     } else if (t === 'text') {
       const st = this.textEdit ? this.textEdit.item : cfg;
       O.append(h('button', { class: 'chip font-chip', style: { fontFamily: fontStack(cfg.font) }, onClick: (e) => fontPicker(e.currentTarget, cfg.font, (f) => { cfg.font = f; saveSettings(); this.renderToolbar(); this.applyTextStyle({ font: f }); this.markAllDirty(); }) }, cfg.font || 'Font'));
@@ -2337,11 +2471,15 @@ export class Editor {
     if (mod && k === '-') { e.preventDefault(); this.zoomAt(this.vw / 2, this.vh / 2, this.cam.s / 1.2); return; }
     if (mod && k === '0') { e.preventDefault(); this.fitWidth(false); return; }
     if (mod && k === 's') { e.preventDefault(); this.save.flush(); toast('Saved'); return; }
+    if (mod && k === 'f') { e.preventDefault(); this.findPanel(); return; }
     if (mod) return;
-    if ((k === 'delete' || k === 'backspace') && this.selection) { e.preventDefault(); this.deleteSelection(); return; }
+    if ((k === 'delete' || k === 'backspace') && this.selection) { e.preventDefault(); if (!this.meta.locked) this.deleteSelection(); return; }
+    if (k === 'escape' && this.eyedrop) { this.eyedrop = false; this.liveCv.style.cursor = ''; return; }
     if (k === 'escape') { if (this.el.classList.contains('focus')) this.toggleFocus(); this.clearSelection(); return; }
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
-    const map = { p: 'pen', h: 'hl', e: 'eraser', l: 'lasso', t: 'text', k: 'laser' };
+    const map = { p: 'pen', h: 'hl', e: 'eraser', l: 'lasso', t: 'text', k: 'laser', y: 'tape' };
+    if (k === 'z' && !e.shiftKey) { this.toggleZoom(); return; }
+    if (k === 'r') { this.toggleRuler(); return; }
     if (map[k]) this.setTool(map[k]);
     if (k === 'f') this.toggleFocus();
     if (k === 'pagedown') this.scrollToPage(Math.min(this.pages.length - 1, this.currentIndex() + 1));
@@ -2674,6 +2812,8 @@ export class Editor {
     this.el.remove();
   }
 }
+
+Object.assign(Editor.prototype, toolboxMethods);
 
 function pick(o, keys) { const r = {}; for (const k of keys) r[k] = o[k]; return r; }
 
