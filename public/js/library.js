@@ -15,7 +15,7 @@ import { account, onStatus, signIn, signUp, signOut, updateName, deleteAccount, 
 
 const FOLDER_COLORS = ['#e5484d', '#f76b15', '#f5b400', '#30a46c', '#0090ff', '#6e56cf', '#d6409f', '#7c8088'];
 const REPO = 'https://github.com/ahilgalib/inknote';
-export const APP_VERSION = '2026.10.11 (7)';
+export const APP_VERSION = '2026.10.11 (8)';
 const QUOTES = [
   ['It always seems impossible until it\'s done.', 'Nelson Mandela'],
   ['The expert in anything was once a beginner.', 'Helen Hayes'],

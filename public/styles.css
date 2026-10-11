@@ -520,3 +520,6 @@ button.act-card:hover { border-color: var(--accent); }
   .zoom-panel { height: clamp(150px, 30%, 240px); }
 }
 .update-bar { position: fixed; left: 50%; bottom: calc(18px + var(--safe-b)); transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 8px 8px 8px 16px; font-weight: 600; white-space: nowrap; max-width: calc(100% - 20px); }
+.font-get { min-width: 46px; height: 30px; border-radius: 99px; background: var(--accent-soft); margin-right: 6px; }
+.font-get.done { background: transparent; color: #1f8a4c; }
+.font-note { margin: 0; text-align: center; }

@@ -6,6 +6,7 @@
 // on demand.
 import { db, putAsset, noteAssetIds, setRemoteAssetFetcher } from './db.js';
 import { bodyIds, mergeBodies } from './notes.js';
+import { fontSyncState, fontsDirty, markFontsSynced, applyRemoteFonts } from './fonts.js';
 
 const KEY = 'inknote.account';
 const API = '/api';
@@ -187,17 +188,31 @@ async function push() {
   for (const s of await db.all('subjects')) {
     if ((s.updated || 1) !== s.syncedUpdated) items.push({ kind: 'subject', id: s.id, updated: s.updated || 1, deleted: 0, data: { name: s.name, color: s.color, order: s.order }, _s: s });
   }
+  // my fonts (Google fonts list + uploaded font files) follow the account
+  if (fontsDirty()) {
+    const fs = fontSyncState();
+    const keys = fs.custom.map((c) => 'a_' + c.asset);
+    if (keys.length) {
+      const { missing } = await apiJSON('/blobs/missing', { method: 'POST', body: { keys } });
+      for (const k of missing) {
+        const a = await db.get('assets', k.slice(2));
+        if (a) await api('/blob/' + k, { method: 'PUT', body: a.blob, raw: true, headers: { 'content-type': 'application/octet-stream' } });
+      }
+    }
+    items.push({ kind: 'prefs', id: 'fonts', updated: fs.updated, deleted: 0, data: { installed: fs.installed, custom: fs.custom }, _f: fs.updated });
+  }
   const tombs = await db.all('tombstones');
   for (const t of tombs) items.push({ kind: t.kind, id: t.itemId, updated: t.updated, deleted: 1, _t: t });
   if (!items.length) return 0;
   let refused = 0;
   for (let i = 0; i < items.length; i += 50) {
     const batch = items.slice(i, i + 50);
-    const res = await apiJSON('/items', { method: 'POST', body: { items: batch.map(({ _n, _s, _t, ...x }) => x) } });
+    const res = await apiJSON('/items', { method: 'POST', body: { items: batch.map(({ _n, _s, _t, _f, ...x }) => x) } });
     const ok = new Set(res.accepted);
     for (const it of batch) {
       const key = it.kind + ':' + it.id;
       if (it._t) { await db.del('tombstones', it._t.id); continue; }
+      if (it._f) { if (ok.has(key)) markFontsSynced(it._f); continue; }
       if (!ok.has(key)) { if (it._n) refused++; continue; }
       if (it._n) {
         const cur = await db.get('notes', it.id);
@@ -217,6 +232,11 @@ async function pull() {
   while (more && acct) {
     const res = await apiJSON('/changes?since=' + (acct.cursor || 0));
     for (const it of res.items) {
+      if (it.kind === 'prefs' && it.id === 'fonts') {
+        const fs = fontSyncState();
+        if (!it.deleted && it.data && it.updated !== fs.syncedUpdated && it.updated !== fs.updated) { applyRemoteFonts(it.data, it.updated); changed = true; }
+        continue;
+      }
       if (it.kind === 'subject') {
         const local = await db.get('subjects', it.id);
         if (it.deleted) { if (local) { await db.del('subjects', it.id); changed = true; } continue; }
@@ -294,6 +314,7 @@ async function prefetchAssets() {
     const have = new Set(await db.keys('assets'));
     const need = new Set();
     for (const b of await db.all('bodies')) for (const id of noteAssetIds(b)) if (!have.has(id)) need.add(id);
+    for (const c of fontSyncState().custom) if (!have.has(c.asset)) need.add(c.asset);
     for (const id of need) {
       if (!navigator.onLine || !acct) break;
       const blob = await fetchAsset(id).catch(() => null);
