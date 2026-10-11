@@ -67,6 +67,8 @@ Open http://localhost:8801.
 2. `npm run db:remote`
 3. `npm run deploy`
 
+Or let GitHub deploy for you: add the repository secrets `CLOUDFLARE_API_TOKEN` (a token with *Account → Cloudflare Pages → Edit*) and `CLOUDFLARE_ACCOUNT_ID`; every push to `main` then deploys automatically (`.github/workflows/deploy.yml`).
+
 Without the `functions/` API the app still works fully offline (no sync).
 
 ## Layout
