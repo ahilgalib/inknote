@@ -1,5 +1,6 @@
 // Fonts: any Google Font can be added in one tap; files are cached by the
 // service worker so they keep working offline. Custom .ttf/.otf uploads too.
+// "My fonts" belong to your account: they sync to every device you sign in on.
 import { GOOGLE_FONTS } from './gfonts-list.js';
 import { putAsset, getAssetBlob } from './db.js';
 import { uid } from './util.js';
@@ -23,7 +24,39 @@ function readState() {
   try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; }
 }
 let state = readState() || { installed: DEFAULT_INSTALLED.slice(), custom: [] };
-function persist() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} }
+// fonts added before fonts synced: upload them once
+if (!state.updated && (state.custom.length || state.installed.join('|') !== DEFAULT_INSTALLED.join('|'))) state.updated = Date.now();
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} }
+// a local change: remember when, so sync uploads it
+function persist() {
+  state.updated = Date.now();
+  save();
+  window.dispatchEvent(new Event('inknote-local-change'));
+}
+
+// ---- sync (used by sync.js) ----
+export function fontSyncState() { return state; }
+export function fontsDirty() { return !!state.updated && state.updated !== state.syncedUpdated; }
+export function markFontsSynced(updated) { if (state.updated === updated) { state.syncedUpdated = updated; save(); } }
+// Fonts installed on another device arrive here.
+export function applyRemoteFonts(data, updated) {
+  const custom = Array.isArray(data.custom) ? data.custom.filter((c) => c && c.name && c.asset) : [];
+  const installed = Array.isArray(data.installed) ? data.installed.filter((n) => typeof n === 'string') : [];
+  if (fontsDirty()) {
+    // changed here too: keep both
+    state.installed = [...new Set([...state.installed, ...installed])];
+    const names = new Set(state.custom.map((c) => c.name));
+    state.custom = [...state.custom, ...custom.filter((c) => !names.has(c.name))];
+    state.updated = Date.now();
+  } else {
+    state.installed = installed;
+    state.custom = custom;
+    state.updated = state.syncedUpdated = updated;
+  }
+  save();
+  loadInstalledFonts();
+  window.dispatchEvent(new Event('inknote-fonts-changed'));
+}
 
 export const SYSTEM_FONTS = Object.keys(SYSTEM);
 export function installedFonts() { return [...SYSTEM_FONTS, ...state.custom.map((c) => c.name), ...state.installed]; }

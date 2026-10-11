@@ -1,6 +1,7 @@
 // Font picker: installed fonts + the whole Google Fonts catalogue + uploads.
 import { h, pickFile, toast } from './util.js';
 import { popover, closePopover } from './ui.js';
+import { account } from './sync.js';
 import { GOOGLE_FONTS, installedFonts, installFont, uninstallFont, fontStack, loadPreview, loadFont, addCustomFont, CATEGORY_LABELS, SYSTEM_FONTS } from './fonts.js';
 
 export function fontPicker(anchor, current, onPick) {
@@ -21,7 +22,14 @@ export function fontPicker(anchor, current, onPick) {
     const el = h('div', { class: 'font-row' + (name === current ? ' on' : '') },
       h('button', { class: 'font-name', style: { fontFamily: fontStack(name) }, onClick: () => choose(name) }, name),
       installed && !SYSTEM_FONTS.includes(name) ? h('button', { class: 'font-x', title: 'Remove from my fonts', 'aria-label': 'Remove font', onClick: (e) => { e.stopPropagation(); uninstallFont(name); render(); } }, '×')
-        : installed ? null : h('span', { class: 'font-get' }, 'Get'));
+        : installed ? null : h('button', { class: 'font-get', title: 'Download & add to my fonts (on all your devices)', onClick: async (e) => {
+          e.stopPropagation();
+          const b = e.currentTarget;
+          b.disabled = true; b.textContent = '…';
+          const ok = await installFont(name);
+          if (ok) { b.textContent = '✓'; b.classList.add('done'); toast(name + ' added to My fonts'); }
+          else { b.disabled = false; b.textContent = 'Get'; toast('Could not download that font (offline?)'); }
+        } }, 'Get'));
     if (!installed) loadPreview(name); else loadFont(name);
     return el;
   };
@@ -51,5 +59,9 @@ export function fontPicker(anchor, current, onPick) {
     catch { toast('That font file could not be read'); }
   } }, 'Upload a font file (.ttf / .otf)');
   render();
-  return popover(anchor, h('div', { class: 'font-pop' }, search, chips, list, upload), { className: 'wide' });
+  const note = h('p', { class: 'muted small font-note' }, account() ? 'My fonts are saved to your account and appear on all your devices.' : 'Sign in to keep My fonts on all your devices.');
+  const pop = popover(anchor, h('div', { class: 'font-pop' }, search, chips, list, upload, note), { className: 'wide' });
+  const again = () => { if (pop.isConnected) render(); else window.removeEventListener('inknote-fonts-changed', again); };
+  window.addEventListener('inknote-fonts-changed', again);
+  return pop;
 }

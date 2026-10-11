@@ -170,7 +170,7 @@ export async function onRequest({ request: req, env, params }) {
       const list = Array.isArray(b.items) ? b.items.slice(0, 100) : [];
       const accepted = [];
       for (const it of list) {
-        if (!['note', 'subject'].includes(it.kind) || typeof it.id !== 'string' || it.id.length > 80) continue;
+        if (!['note', 'subject', 'prefs'].includes(it.kind) || typeof it.id !== 'string' || it.id.length > 80) continue;
         const updated = Number(it.updated) || 0;
         const cur = await env.DB.prepare('SELECT updated, body_key FROM items WHERE user_id = ? AND kind = ? AND id = ?').bind(user.id, it.kind, it.id).first();
         if (cur && cur.updated > updated) continue; // server copy is newer
