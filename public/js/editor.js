@@ -2,13 +2,15 @@
 // tools, Procreate-style gestures, clipboard, undo, audio synced with ink.
 import { h, uid, clamp, debounce, toast, fmtTime, pickFile, saveFile, safeName, loadImage } from './util.js';
 import { icons } from './icons.js';
-import { settings, saveSettings, fingerDraws } from './settings.js';
-import { drawStroke, drawLiveStroke, itemBBox, invalidate, strokeHit, strokeHitSegment, splitStroke, lassoHit, transformItem, round2 } from './ink.js';
+import { settings, saveSettings, fingerDraws, applyTheme } from './settings.js';
+import { drawStroke, drawLiveStroke, itemBBox, invalidate, strokeHit, strokeHitSegment, splitStroke, lassoHit, transformItem, round2, inkColor } from './ink.js';
 import { recognize } from './shapes.js';
-import { drawPage, drawItems, measureText, renderPageCanvas, fontFor } from './render.js';
+import { drawPage, drawItems, measureText, renderPageCanvas, fontFor, drawImageItem, visualBBox } from './render.js';
 import { PAPERS, PLANNERS, PAPER_COLORS, SIZES, ACCENTS, templatePreview, isDarkPaper, plannerById, plannerPaperColor, templateLabel, TEMPLATE_FONTS } from './templates.js';
 import { putAsset, assetURL, db, getAssetBlob } from './db.js';
-import { saveNote, makeThumb, newPage, exportNotePDF, exportNoteFile, pdfToPages, imagesToPages } from './notes.js';
+import { saveNote, makeThumb, newPage, exportNotePDF, exportNoteFile, pdfToPages, imagesToPages, bodyIds, mergeBodies } from './notes.js';
+import { onStatus } from './sync.js';
+import { importPDF } from './pdf.js';
 import { popover, menu, closePopover, confirmDialog, progressDialog, colorPopover, sliderPopover } from './ui.js';
 import { fontStack, loadFont } from './fonts.js';
 import { fontPicker } from './fontpicker.js';
@@ -20,6 +22,7 @@ const CAP = 2600;        // max cache bitmap size (px, longest side)
 const MAX_CACHE = matchMedia('(pointer: coarse)').matches ? 4 : 6;
 const HOLD_MS = 520;     // draw-and-hold → shape
 const CLIP_PREFIX = 'inknote-clip:';
+const DARK_PAPER = '#141416';
 let clipboard = null;    // { id, items } shared between notes
 
 const TOOLS = [
@@ -52,6 +55,7 @@ export class Editor {
     for (const p of this.pages) for (const it of p.items) zc = Math.max(zc, it.z || 0);
     body.zc = Math.max(body.zc || 0, zc);
     this.save = debounce(() => this.persist(), 1000);
+    this.baseIds = bodyIds(body);
     this.build();
     this.layoutPages();
     loadFont(settings.tools.text.font);
@@ -75,7 +79,9 @@ export class Editor {
       btn('pages', 'Page thumbnails', () => this.togglePagesPanel()),
       this.titleInput,
       h('div', { class: 'grow' }),
+      this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
       this.recBtn,
+      this.themeBtn = btn('moon', 'Dark / light pages', () => this.toggleDarkMode()),
       btn('template', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
       btn('share', 'Share & export', (e) => this.exportMenu(e.currentTarget)),
       btn('expand', 'Full screen (4-finger tap)', () => this.toggleFocus()),
@@ -86,7 +92,7 @@ export class Editor {
       const b = h('button', { class: 'tool-btn', title: `${label} (${key})`, 'aria-label': label, onClick: () => this.toolTap(id), html: icons[icon] });
       this.toolBtns[id] = b;
       return b;
-    }), h('button', { class: 'tool-btn', title: 'Insert photo or image', 'aria-label': 'Insert image', onClick: () => this.pickImages(), html: icons.image }));
+    }), h('button', { class: 'tool-btn', title: 'Insert photo, camera, audio, PDF…', 'aria-label': 'Insert', onClick: (e) => this.insertMenu(e.currentTarget), html: icons.image }));
 
     this.undoBtn = btn('undo', 'Undo (2-finger tap)', () => this.undo());
     this.redoBtn = btn('redo', 'Redo (3-finger tap)', () => this.redo());
@@ -101,13 +107,18 @@ export class Editor {
     this.lctx = this.liveCv.getContext('2d');
     this.textarea = h('textarea', { class: 'text-edit', hidden: true, spellcheck: 'true', autocapitalize: 'sentences' });
     this.textarea.addEventListener('input', () => this.sizeTextarea());
-    this.textarea.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== this.textarea) this.commitText(); }, 120));
+    this.textarea.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== this.textarea && !this.gripping) this.commitText(); }, 120));
     this.textarea.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.textarea.blur(); e.stopPropagation(); });
     this.selMenu = h('div', { class: 'sel-menu', hidden: true });
+    // grips on the text box being edited: drag to move it, drag the side to change its width
+    this.textGrip = h('div', { class: 'text-grip', hidden: true, title: 'Drag to move', html: icons.move });
+    this.textWidthGrip = h('div', { class: 'text-wgrip', hidden: true, title: 'Drag to resize' });
+    this.bindTextGrip(this.textGrip, 'move');
+    this.bindTextGrip(this.textWidthGrip, 'width');
     this.pageInd = h('div', { class: 'page-ind' });
     this.addTile = h('button', { class: 'add-tile', hidden: true, onClick: () => this.addPage(this.pages.length - 1) }, h('span', { html: icons.plus }), 'Add page');
     this.focusExit = h('button', { class: 'focus-exit', title: 'Exit full screen', 'aria-label': 'Exit full screen', html: icons.shrink, onClick: () => this.toggleFocus() });
-    this.stage = h('div', { class: 'stage' }, this.main, this.liveCv, this.textarea, this.selMenu, this.pageInd, this.addTile, this.focusExit);
+    this.stage = h('div', { class: 'stage' }, this.main, this.liveCv, this.textarea, this.textGrip, this.textWidthGrip, this.selMenu, this.pageInd, this.addTile, this.focusExit);
 
     this.audioBar = h('div', { class: 'audio-bar', hidden: true });
     this.pagesPanel = h('aside', { class: 'pages-panel', hidden: true });
@@ -144,6 +155,7 @@ export class Editor {
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(this.stage);
 
+    this.unsubSync = onStatus((st) => this.renderSyncPill(st));
     this.renderToolbar();
     this.renderAudioBar();
     TEMPLATE_FONTS.forEach((f) => loadFont(f.split(':')[0]));
@@ -309,6 +321,26 @@ export class Editor {
     if (pending) this.requestRender();
     this.evictCaches(vis);
     this.positionOverlays();
+    const dk = this.curDark();
+    if (dk !== this.lastDark) {
+      this.lastDark = dk;
+      this.themeBtn.innerHTML = icons[dk ? 'sun' : 'moon'];
+      this.renderToolbar();
+    }
+  }
+
+  curDark() { const p = this.lay && this.vw ? this.pages[this.currentIndex()] : this.pages[0]; return !!p && !p.bg && isDarkPaper(p.color); }
+
+  // Fade from the old picture to the new one (template / paper changes).
+  crossfade() {
+    if (!this.vw || !this.main.width) return;
+    const c = h('canvas', { class: 'cv-fade' });
+    c.width = this.main.width; c.height = this.main.height;
+    c.style.width = this.vw + 'px'; c.style.height = this.vh + 'px';
+    c.getContext('2d').drawImage(this.main, 0, 0);
+    this.stage.insertBefore(c, this.liveCv);
+    requestAnimationFrame(() => requestAnimationFrame(() => { c.style.opacity = '0'; }));
+    setTimeout(() => { c.remove(); c.width = c.height = 0; }, 420);
   }
 
   drawVector(ctx, o) {
@@ -458,32 +490,63 @@ export class Editor {
     }
     const sel = this.selection;
     if (sel) {
-      const d = this.drag;
+      const d = this.drag, s = this.cam.s;
       this.pageTransform(ctx, sel.o);
-      if (d) {
+      if (d && d.mode === 'crop') {
+        const img = this.images.get(d.cur.asset);
+        ctx.save(); ctx.globalAlpha = 0.28; drawImageItem(ctx, d.full, img); ctx.restore();
+        drawImageItem(ctx, { ...d.cur, sticker: false }, img);
+      } else if (d && d.bmp) {
+        // the selection is lifted off the page as one bitmap: moving, scaling
+        // and rotating it costs a single drawImage per frame
         ctx.save();
         this.applyDragTransform(ctx, d);
-        drawItems(ctx, sel.o.page, sel.o.page.items.filter((i) => sel.ids.has(i.id)), { images: this.images });
+        ctx.shadowColor = 'rgba(0,0,0,0.22)';
+        ctx.shadowBlur = 16 * this.dpr;
+        ctx.shadowOffsetY = 6 * this.dpr;
+        ctx.drawImage(d.bmp.canvas, d.bmp.x, d.bmp.y, d.bmp.w, d.bmp.h);
         ctx.restore();
       }
-      const b = this.selBox(true);
-      if (b) {
-        const s = this.cam.s;
-        ctx.save();
-        if (d && d.mode === 'rotate') { ctx.translate(d.cx, d.cy); ctx.rotate(d.a); ctx.translate(-d.cx, -d.cy); }
-        ctx.lineWidth = 1.5 / s;
-        ctx.setLineDash([6 / s, 4 / s]);
-        ctx.strokeStyle = '#4f6bed';
-        ctx.strokeRect(b.x, b.y, b.w, b.h);
-        ctx.setLineDash([]);
-        // scale handle (bottom-right) and rotate handle (top-centre)
-        ctx.fillStyle = '#fff';
-        ctx.lineWidth = 2 / s;
-        ctx.beginPath(); ctx.arc(b.x + b.w, b.y + b.h, 9 / s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(b.x + b.w / 2, b.y); ctx.lineTo(b.x + b.w / 2, b.y - 22 / s); ctx.stroke();
-        ctx.beginPath(); ctx.arc(b.x + b.w / 2, b.y - 28 / s, 7 / s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        ctx.restore();
+      ctx.save();
+      ctx.lineWidth = 1.5 / s;
+      ctx.strokeStyle = '#4f6bed';
+      ctx.fillStyle = '#fff';
+      if (this.cropMode) {
+        let it = d && d.mode === 'crop' ? d.cur : this.selItems()[0];
+        if (it && d && d.mode === 'move') it = { ...it, x: it.x + d.dx, y: it.y + d.dy };
+        if (it) {
+          ctx.lineWidth = 2 / s;
+          ctx.strokeRect(it.x, it.y, it.w, it.h);
+          ctx.lineWidth = 5 / s;
+          ctx.strokeStyle = '#fff';
+          ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3;
+          const L = 18 / s;
+          for (const [x, y, dx, dy] of [[it.x, it.y, 1, 1], [it.x + it.w, it.y, -1, 1], [it.x, it.y + it.h, 1, -1], [it.x + it.w, it.y + it.h, -1, -1]]) {
+            ctx.beginPath(); ctx.moveTo(x + dx * L, y); ctx.lineTo(x, y); ctx.lineTo(x, y + dy * L); ctx.stroke();
+          }
+          for (const [x, y, hor] of [[it.x + it.w / 2, it.y, 1], [it.x + it.w / 2, it.y + it.h, 1], [it.x, it.y + it.h / 2, 0], [it.x + it.w, it.y + it.h / 2, 0]]) {
+            ctx.beginPath();
+            if (hor) { ctx.moveTo(x - L / 2, y); ctx.lineTo(x + L / 2, y); } else { ctx.moveTo(x, y - L / 2); ctx.lineTo(x, y + L / 2); }
+            ctx.stroke();
+          }
+        }
+      } else {
+        const b = this.selBox(true);
+        if (b) {
+          if (d && d.mode === 'rotate') { ctx.translate(d.cx, d.cy); ctx.rotate(d.a); ctx.translate(-d.cx, -d.cy); }
+          ctx.setLineDash([6 / s, 4 / s]);
+          ctx.strokeRect(b.x, b.y, b.w, b.h);
+          ctx.setLineDash([]);
+          // four corner handles (resize) and a rotate handle (top-centre)
+          ctx.lineWidth = 2 / s;
+          for (const [x, y] of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]) {
+            ctx.beginPath(); ctx.arc(x, y, 8 / s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          }
+          ctx.beginPath(); ctx.moveTo(b.x + b.w / 2, b.y); ctx.lineTo(b.x + b.w / 2, b.y - 22 / s); ctx.stroke();
+          ctx.beginPath(); ctx.arc(b.x + b.w / 2, b.y - 28 / s, 7 / s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
       }
+      ctx.restore();
     }
     if (this.hover && (this.tool === 'eraser' || this.eraserOverride)) {
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -560,7 +623,7 @@ export class Editor {
       if (this.penActive) return; // palm rejection
       this.pointers.set(p.id, p);
       const touches = [...this.pointers.values()].filter((q) => q.type === 'touch' && q.role !== 'ignore');
-      if (touches.length === 1 && fingerDraws() && this.tool !== 'hand') {
+      if (touches.length === 1 && ((this.selection && this.selHit(p.sx, p.sy)) || (fingerDraws() && this.tool !== 'hand'))) {
         p.role = 'draw';
         this.startTool(p, e);
         return;
@@ -715,6 +778,7 @@ export class Editor {
         if (G.maxN === 2 && settings.twoFingerUndo) { this.undo(); this.flashIndicator('Undo'); }
         else if (G.maxN === 3 && settings.twoFingerUndo) { this.redo(); this.flashIndicator('Redo'); }
         else if (G.maxN >= 4) this.toggleFocus();
+        else if (G.maxN === 1) this.tapAt(G.last);
       }
       // quick pinch-in snaps back to fit width
       if (G.moved && G.maxN === 2 && dt < 320 && this.cam.s < G.startS * 0.8) { this.fitWidth(false); }
@@ -787,6 +851,18 @@ export class Editor {
     const d = this.screenToDoc(p.sx, p.sy);
     const t = this.activeTool();
     if (this.textEdit && t !== 'text') this.commitText();
+    // a selection can be moved / resized / rotated whatever tool is active
+    if (this.selection && t !== 'laser' && !this.eraserOverride) {
+      const hit = this.selHit(p.sx, p.sy);
+      if (hit) { this.startDrag(hit, p); return; }
+      this.clearSelection();
+    }
+    if (t === 'text' && !this.textEdit) {
+      // press on a text box / picture: drag moves it, a tap edits / selects it
+      const o = this.pageAt(d.x, d.y);
+      const it = o && this.itemAt(o, d.x - o.x, d.y - o.y, ['text', 'image', 'audio']);
+      if (it) { this.press = { o, item: it, sx: p.sx, sy: p.sy }; return; }
+    }
     if (t === 'pen' || t === 'hl' || t === 'laser') {
       const o = this.pageAt(d.x, d.y, t === 'laser' ? 2000 : 0);
       if (!o) { p.role = 'none'; return; }
@@ -810,11 +886,6 @@ export class Editor {
       this.eraseSeg(d.x - o.x, d.y - o.y);
       this.hover = { x: p.sx, y: p.sy };
     } else if (t === 'lasso') {
-      if (this.selection) {
-        const hit = this.selHit(p.sx, p.sy);
-        if (hit) { this.startDrag(hit, p); return; }
-        this.clearSelection();
-      }
       const o = this.pageAt(d.x, d.y, 40);
       if (!o) { p.role = 'none'; return; }
       this.lasso = { o, pts: [d.x - o.x, d.y - o.y] };
@@ -823,6 +894,16 @@ export class Editor {
   }
 
   moveTool(p, ev) {
+    if (this.press) {
+      const pr = this.press;
+      if (Math.hypot(p.sx - pr.sx, p.sy - pr.sy) > 8) {
+        this.press = null;
+        this.select(pr.o, [pr.item.id]);
+        this.startDrag('move', { sx: pr.sx, sy: pr.sy });
+        this.updateDrag(p);
+      }
+      return;
+    }
     const d = this.screenToDoc(p.sx, p.sy);
     const L = this.live || (this.laser && this.laser.pid === p.id ? this.laser : null);
     if (L) {
@@ -865,6 +946,7 @@ export class Editor {
       this.finishErase();
       if (settings.eraserAutoDeselect && this.tool === 'eraser' && !this.eraserOverride && this.prevTool && this.prevTool !== 'eraser') this.setTool(this.prevTool);
     } else if (this.drag) this.endDrag();
+    else if (this.press) { const pr = this.press; this.press = null; if (!cancelled) this.tapItem(pr.o, pr.item, 'text'); }
     else if (this.lasso) this.finishLasso(p);
     else if (this.tool === 'text' && !cancelled) this.textTap(p);
     this.eraserOverride = false;
@@ -874,8 +956,9 @@ export class Editor {
   cancelTool(p) {
     if (this.live && this.live.pid === p.id) { clearTimeout(this.holdTimer); this.live = null; }
     else if (this.erase) this.finishErase();
-    else if (this.drag) this.endDrag();
+    else if (this.drag) { this.drag.cancel = true; this.endDrag(); }
     else if (this.lasso) this.lasso = null;
+    this.press = null;
     p.role = 'none';
     this.requestLive();
   }
@@ -911,6 +994,10 @@ export class Editor {
     this.live = null;
     const tap = Math.hypot(p.sx - p.x0, p.sy - p.y0) < 6 && performance.now() - p.t0 < 350;
     if (this.playback && tap && this.seekToStrokeAt(L.o, L.pts[0], L.pts[1])) { this.requestLive(); return; }
+    if (tap && L.tool !== 'laser') {
+      const hit = this.itemAt(L.o, L.pts[0], L.pts[1], p.type === 'pen' ? ['audio'] : ['image', 'audio', 'text']);
+      if (hit) { this.tapItem(L.o, hit, 'pen'); this.requestLive(); return; }
+    }
     let pts = L.pts;
     if (!L.shape && pts.length > 3) {
       const n = pts.length;
@@ -1000,7 +1087,8 @@ export class Editor {
   }
 
   select(o, ids) {
-    if (this.tool !== 'lasso') this.setTool('lasso', true);
+    if (this.textEdit) this.commitText();
+    this.cropMode = false;
     this.selection = { o, ids: new Set(ids) };
     this.showSelMenu();
     this.requestLive();
@@ -1008,6 +1096,7 @@ export class Editor {
 
   clearSelection() {
     this.selection = null;
+    this.cropMode = false;
     this.selMenu.hidden = true;
     this.requestLive();
   }
@@ -1041,37 +1130,96 @@ export class Editor {
     return { x: x + (o.x + b.x) * s, y: y + (o.y + b.y) * s, w: b.w * s, h: b.h * s };
   }
 
+  // Which handle (if any) is under a screen point.
   selHit(sx, sy) {
+    if (this.cropMode) {
+      const it = this.selItems()[0];
+      if (!it) return null;
+      const o = this.selection.o, { s, x, y } = this.cam;
+      const L = x + (o.x + it.x) * s, T = y + (o.y + it.y) * s, R = L + it.w * s, B = T + it.h * s;
+      const near = 22;
+      const w = Math.abs(sx - L) < near, e = Math.abs(sx - R) < near, n = Math.abs(sy - T) < near, so = Math.abs(sy - B) < near;
+      const inX = sx > L - near && sx < R + near, inY = sy > T - near && sy < B + near;
+      const edge = (n && inX ? 'n' : so && inX ? 's' : '') + (w && inY ? 'w' : e && inY ? 'e' : '');
+      if (edge) return 'crop:' + edge;
+      if (sx > L && sx < R && sy > T && sy < B) return 'move';
+      return null;
+    }
     const r = this.selScreenBox();
     if (!r) return null;
-    if (Math.hypot(sx - (r.x + r.w), sy - (r.y + r.h)) < 26) return 'scale';
+    const corners = { nw: [r.x, r.y], ne: [r.x + r.w, r.y], sw: [r.x, r.y + r.h], se: [r.x + r.w, r.y + r.h] };
+    for (const [k, [cx, cy]] of Object.entries(corners)) if (Math.hypot(sx - cx, sy - cy) < 24) return 'scale:' + k;
     if (Math.hypot(sx - (r.x + r.w / 2), sy - (r.y - 28)) < 24) return 'rotate';
     if (sx >= r.x - 10 && sx <= r.x + r.w + 10 && sy >= r.y - 10 && sy <= r.y + r.h + 10) return 'move';
     return null;
   }
 
-  startDrag(mode, p) {
+  // Render the selection once into a bitmap that is moved around while dragging.
+  dragBitmap(items, page) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const it of items) { const b = visualBBox(it); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
+    x0 -= 4; y0 -= 4; x1 += 4; y1 += 4;
+    const w = x1 - x0, hh = y1 - y0;
+    if (!(w > 0 && hh > 0)) return null;
+    const q = Math.min(this.cam.s * this.dpr, 2400 / Math.max(w, hh));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w * q)); c.height = Math.max(1, Math.ceil(hh * q));
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    ctx.setTransform(q, 0, 0, q, -x0 * q, -y0 * q);
+    drawItems(ctx, page, items, { images: this.images });
+    return { canvas: c, x: x0, y: y0, w, h: hh };
+  }
+
+  startDrag(hit, p) {
+    const [mode, arg] = hit.split(':');
     const b = this.selBox();
     const d = this.screenToDoc(p.sx, p.sy), o = this.selection.o;
-    this.drag = {
+    const ub = { x: b.x + 6, y: b.y + 6, w: b.w - 12, h: b.h - 12 };
+    const D = {
       mode, sx0: p.sx, sy0: p.sy, dx: 0, dy: 0, k: 1, a: 0,
-      ox: b.x + 6, oy: b.y + 6, bw: b.w, bh: b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2,
+      ox: ub.x, oy: ub.y, bw: b.w, bh: b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2,
       a0: Math.atan2(d.y - o.y - (b.y + b.h / 2), d.x - o.x - (b.x + b.w / 2)),
     };
+    if (mode === 'scale') {
+      // scale about the opposite corner
+      const c = arg || 'se';
+      D.hx = c.includes('e') ? ub.x + ub.w : ub.x; D.hy = c.includes('s') ? ub.y + ub.h : ub.y;
+      D.ox = c.includes('e') ? ub.x : ub.x + ub.w; D.oy = c.includes('s') ? ub.y : ub.y + ub.h;
+    }
+    if (mode === 'crop') {
+      const it = this.selItems()[0];
+      const c0 = it.crop || { x: 0, y: 0, w: 1, h: 1 };
+      const fw = it.w / c0.w, fh = it.h / c0.h;
+      const fx = it.x - (it.flip ? 1 - c0.x - c0.w : c0.x) * fw, fy = it.y - c0.y * fh;
+      Object.assign(D, { edge: arg, orig: structuredClone(it), cur: structuredClone(it), full: { ...it, x: fx, y: fy, w: fw, h: fh, crop: undefined, sticker: false } });
+    } else D.bmp = this.dragBitmap(this.selItems(), o.page);
+    this.drag = D;
     this.hidden = new Set(this.selection.ids);
-    this.markDirty(this.selection.o.page);
+    this.markDirty(o.page);
     this.selMenu.hidden = true;
+    this.requestLive();
   }
 
   updateDrag(p) {
-    const d = this.drag, s = this.cam.s;
+    const d = this.drag, s = this.cam.s, o = this.selection.o;
+    const q = this.screenToDoc(p.sx, p.sy);
+    const lx = q.x - o.x, ly = q.y - o.y;
     if (d.mode === 'move') { d.dx = (p.sx - d.sx0) / s; d.dy = (p.sy - d.sy0) / s; }
     else if (d.mode === 'scale') {
-      const ddx = (p.sx - d.sx0) / s, ddy = (p.sy - d.sy0) / s;
-      d.k = clamp((d.bw + d.bh + ddx + ddy) / (d.bw + d.bh), 0.08, 25);
+      const vx = d.hx - d.ox, vy = d.hy - d.oy, l2 = vx * vx + vy * vy || 1;
+      d.k = clamp(((lx - d.ox) * vx + (ly - d.oy) * vy) / l2, 0.05, 25);
+    } else if (d.mode === 'crop') {
+      const f = d.full, it = d.orig, e = d.edge, min = 16 / s;
+      let L = it.x, T = it.y, R = it.x + it.w, B = it.y + it.h;
+      if (e.includes('w')) L = clamp(lx, f.x, R - min);
+      if (e.includes('e')) R = clamp(lx, L + min, f.x + f.w);
+      if (e.includes('n')) T = clamp(ly, f.y, B - min);
+      if (e.includes('s')) B = clamp(ly, T + min, f.y + f.h);
+      const dl = (L - f.x) / f.w, dr = (R - f.x) / f.w;
+      d.cur = { ...it, x: L, y: T, w: R - L, h: B - T, crop: { x: it.flip ? 1 - dr : dl, y: (T - f.y) / f.h, w: dr - dl, h: (B - T) / f.h } };
     } else {
-      const q = this.screenToDoc(p.sx, p.sy), o = this.selection.o;
-      let a = Math.atan2(q.y - o.y - d.cy, q.x - o.x - d.cx) - d.a0;
+      let a = Math.atan2(ly - d.cy, lx - d.cx) - d.a0;
       const snap = Math.round(a / (Math.PI / 4)) * (Math.PI / 4);
       if (Math.abs(a - snap) < 0.06) a = snap; // snap to 45°
       d.a = a;
@@ -1082,36 +1230,133 @@ export class Editor {
     const d = this.drag;
     this.drag = null;
     this.hidden = null;
-    const page = this.selection.o.page;
-    const moved = d.mode === 'move' ? Math.hypot(d.dx, d.dy) > 0.5 : d.mode === 'scale' ? Math.abs(d.k - 1) > 0.005 : Math.abs(d.a) > 0.005;
+    if (d.bmp) d.bmp.canvas.width = d.bmp.canvas.height = 0;
+    const o = this.selection.o, page = o.page;
+    const moved = !d.cancel && (d.mode === 'move' ? Math.hypot(d.dx, d.dy) > 0.5 : d.mode === 'scale' ? Math.abs(d.k - 1) > 0.005
+      : d.mode === 'crop' ? JSON.stringify(d.cur) !== JSON.stringify(d.orig) : Math.abs(d.a) > 0.005);
     if (moved) {
       const items = this.selItems();
       const before = items.map((i) => structuredClone(i));
-      for (const it of items) {
-        if (d.mode === 'move') transformItem(it, { dx: d.dx, dy: d.dy });
-        else if (d.mode === 'scale') transformItem(it, { k: d.k, ox: d.ox, oy: d.oy });
-        else transformItem(it, { rot: d.a, cx: d.cx, cy: d.cy });
+      if (d.mode === 'crop') {
+        const it = items[0], c = d.cur.crop;
+        Object.assign(it, { x: d.cur.x, y: d.cur.y, w: d.cur.w, h: d.cur.h, crop: c });
+        if (c.x < 0.001 && c.y < 0.001 && c.w > 0.999 && c.h > 0.999) delete it.crop;
+        invalidate(it);
+      } else {
+        for (const it of items) {
+          if (d.mode === 'move') transformItem(it, { dx: d.dx, dy: d.dy });
+          else if (d.mode === 'scale') transformItem(it, { k: d.k, ox: d.ox, oy: d.oy });
+          else transformItem(it, { rot: d.a, cx: d.cx, cy: d.cy });
+        }
       }
-      this.pushOp({ kind: 'items', page: page.id, remove: before, add: items.map((i) => structuredClone(i)) });
+      // dropped onto another page: the items move to that page
+      const target = d.mode === 'move' ? this.pageAt(o.x + d.cx + d.dx, o.y + d.cy + d.dy) : null;
+      if (target && target !== o) {
+        const ids = this.selection.ids;
+        page.items = page.items.filter((i) => !ids.has(i.id));
+        for (const it of items) { transformItem(it, { dx: o.x - target.x, dy: o.y - target.y }); target.page.items.push(it); }
+        target.page.items.sort((a, b) => a.z - b.z);
+        this.pushOp({ kind: 'multi', ops: [
+          { kind: 'items', page: page.id, remove: before, add: [] },
+          { kind: 'items', page: target.page.id, remove: [], add: items.map((i) => structuredClone(i)) },
+        ] });
+        this.selection = { o: target, ids };
+        this.markDirty(target.page);
+      } else this.pushOp({ kind: 'items', page: page.id, remove: before, add: items.map((i) => structuredClone(i)) });
     }
     this.markDirty(page);
     this.showSelMenu();
+  }
+
+  // Topmost item of the given types under a page point.
+  itemAt(o, lx, ly, types) {
+    const r = 6 / this.cam.s;
+    for (let i = o.page.items.length - 1; i >= 0; i--) {
+      const it = o.page.items[i];
+      if (!types.includes(it.type)) continue;
+      const b = itemBBox(it);
+      if (lx >= b.x - r && lx <= b.x + b.w + r && ly >= b.y - r && ly <= b.y + b.h + r) return it;
+    }
+    return null;
+  }
+
+  tapAt(pt) {
+    const d = this.screenToDoc(pt.x, pt.y);
+    const o = this.pageAt(d.x, d.y);
+    const it = o && this.itemAt(o, d.x - o.x, d.y - o.y, ['image', 'audio', 'text']);
+    if (it) this.tapItem(o, it, 'finger');
+    else if (this.selection) this.clearSelection();
+  }
+
+  // Tap on a picture → select it with its options; text → edit (text tool) or
+  // select; audio clip → play.
+  tapItem(o, it, via) {
+    if (it.type === 'audio') { this.playAudioItem(it); return; }
+    if (it.type === 'text' && via === 'text') { this.editText(o, it, false); return; }
+    this.select(o, [it.id]);
   }
 
   showSelMenu() {
     const m = this.selMenu;
     m.innerHTML = '';
     const b = (icon, label, fn, cls = '') => h('button', { class: 'sel-btn ' + cls, title: label, 'aria-label': label, onClick: (e) => { e.stopPropagation(); fn(e); } }, h('span', { html: icons[icon] }), h('small', {}, label));
-    m.append(
-      b('palette', 'Colour', (e) => colorPopover(e.currentTarget, this.selItems()[0]?.color || '#000000', (c, final) => { if (final) this.recolorSelection(c); })),
-      b('duplicate', 'Duplicate', () => this.duplicateSelection()),
-      b('copy', 'Copy', () => this.copySelection()),
-      b('cut', 'Cut', () => { this.copySelection(); this.deleteSelection(); }),
-      b('up', 'Front', () => this.reorderSelection(1)),
-      b('down', 'Back', () => this.reorderSelection(-1)),
-      b('trash', 'Delete', () => this.deleteSelection(), 'danger'));
+    const items = this.selItems();
+    const one = items.length === 1 ? items[0] : null;
+    if (this.cropMode) {
+      m.append(
+        b('restore', 'Reset', () => this.updateSelected((it) => { if (!it.crop) return; const c = it.crop, fw = it.w / c.w, fh = it.h / c.h; it.x -= (it.flip ? 1 - c.x - c.w : c.x) * fw; it.y -= c.y * fh; it.w = fw; it.h = fh; delete it.crop; })),
+        b('check', 'Done', () => { this.cropMode = false; this.showSelMenu(); this.requestLive(); }, 'primary'));
+    } else if (one && one.type === 'image') {
+      m.append(
+        b('sticker', one.sticker ? 'Sticker ✓' : 'Sticker', () => this.updateSelected((it) => { it.sticker = !it.sticker || undefined; })),
+        b('crop', 'Crop', () => { if (one.rot) { toast('Straighten the picture to crop it'); return; } this.cropMode = true; this.showSelMenu(); this.requestLive(); }),
+        b('rotate', 'Rotate', () => this.rotateSelection(Math.PI / 2)),
+        b('flip', 'Flip', () => this.updateSelected((it) => { it.flip = !it.flip || undefined; })),
+        b('copy', 'Copy', () => this.copySelection()),
+        b('duplicate', 'Duplicate', () => this.duplicateSelection()),
+        b('up', 'Front', () => this.reorderSelection(1)),
+        b('down', 'Back', () => this.reorderSelection(-1)),
+        b('trash', 'Delete', () => this.deleteSelection(), 'danger'));
+    } else if (one && one.type === 'audio') {
+      m.append(
+        b('play', 'Play', () => this.playAudioItem(one)),
+        b('copy', 'Copy', () => this.copySelection()),
+        b('duplicate', 'Duplicate', () => this.duplicateSelection()),
+        b('trash', 'Delete', () => this.deleteSelection(), 'danger'));
+    } else {
+      m.append(
+        one && one.type === 'text' ? b('text', 'Edit', () => { const o = this.selection.o; this.clearSelection(); this.editText(o, one, false); }) : null,
+        b('palette', 'Colour', (e) => colorPopover(e.currentTarget, items.find((i) => i.color)?.color || '#000000', (c, final) => { if (final) this.recolorSelection(c); })),
+        b('duplicate', 'Duplicate', () => this.duplicateSelection()),
+        b('copy', 'Copy', () => this.copySelection()),
+        b('cut', 'Cut', () => { this.copySelection(); this.deleteSelection(); }),
+        b('rotate', 'Rotate', () => this.rotateSelection(Math.PI / 2)),
+        b('up', 'Front', () => this.reorderSelection(1)),
+        b('down', 'Back', () => this.reorderSelection(-1)),
+        b('trash', 'Delete', () => this.deleteSelection(), 'danger'));
+    }
     m.hidden = false;
     this.positionSelMenu();
+  }
+
+  // Change the selected items in place (undoable).
+  updateSelected(fn) {
+    const items = this.selItems();
+    if (!items.length) return;
+    const page = this.selection.o.page;
+    const before = items.map((i) => structuredClone(i));
+    items.forEach((i) => { fn(i); for (const k of Object.keys(i)) if (i[k] === undefined) delete i[k]; invalidate(i); });
+    this.pushOp({ kind: 'items', page: page.id, remove: before, add: items.map((i) => structuredClone(i)) });
+    this.markDirty(page);
+    this.showSelMenu();
+    this.requestLive();
+  }
+
+  rotateSelection(a) {
+    const b = this.selBox();
+    if (!b) return;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    this.updateSelected((it) => transformItem(it, { rot: a, cx, cy }));
   }
 
   positionSelMenu() {
@@ -1126,7 +1371,7 @@ export class Editor {
   }
 
   recolorSelection(color) {
-    const items = this.selItems().filter((i) => i.type !== 'image');
+    const items = this.selItems().filter((i) => i.type !== 'image' && i.type !== 'audio');
     if (!items.length) return;
     const before = items.map((i) => structuredClone(i));
     items.forEach((i) => { i.color = color; invalidate(i); });
@@ -1161,7 +1406,8 @@ export class Editor {
   copyItems(items, label) {
     if (!items.length) return;
     const id = uid();
-    clipboard = { id, items: items.map((i) => structuredClone(i)) };
+    const recIds = new Set(items.filter((i) => i.type === 'audio').map((i) => i.rec));
+    clipboard = { id, items: items.map((i) => structuredClone(i)), recs: this.body.recordings.filter((r) => recIds.has(r.id)).map((r) => structuredClone(r)) };
     toast(label || (items.length === 1 ? 'Copied' : `Copied ${items.length} items`));
     this.renderToolbar();
     // best effort: put a PNG of the selection on the system clipboard
@@ -1202,6 +1448,9 @@ export class Editor {
     if (!clipboard) { this.pasteSystem(at); return; }
     const o = at ? this.pageAt(...Object.values(this.screenToDoc(at.x, at.y)), 0) || this.lay[this.currentIndex()] : this.lay[this.currentIndex()];
     const items = clipboard.items.map((i) => structuredClone(i));
+    for (const r of clipboard.recs || []) {
+      if (!this.body.recordings.some((x) => x.id === r.id)) { this.body.recordings.push(structuredClone(r)); this.renderAudioBar(); }
+    }
     if (at) {
       // centre the pasted items where the finger/pen tapped
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -1213,20 +1462,22 @@ export class Editor {
     } else this.insertItems(o, items, 20);
   }
 
-  // Read the system clipboard (images or text from other apps).
+  // Read the system clipboard (images, PDF, audio, rich or plain text from other apps).
   async pasteSystem(at) {
     if (!navigator.clipboard || !navigator.clipboard.read) { toast('Nothing to paste'); return; }
     try {
       const list = await navigator.clipboard.read();
       for (const ci of list) {
-        if (ci.types.includes('text/plain')) {
-          const text = await (await ci.getType('text/plain')).text();
-          if (clipboard && text === CLIP_PREFIX + clipboard.id) { this.paste(at); return; }
-          const img = ci.types.find((t) => t.startsWith('image/'));
-          if (!img && text.trim()) { this.insertTextBox(text, at); return; }
+        const text = ci.types.includes('text/plain') ? await (await ci.getType('text/plain')).text() : '';
+        if (clipboard && text === CLIP_PREFIX + clipboard.id) { this.paste(at); return; }
+        const files = [];
+        for (const t of ci.types) if (/^(image|audio)\//.test(t) || t === 'application/pdf') files.push(new File([await ci.getType(t)], 'pasted', { type: t }));
+        if (await this.insertFiles(files.slice(0, 1), at, { pasted: true })) return;
+        if (ci.types.includes('text/html')) {
+          const blobs = await imagesFromHTML(await (await ci.getType('text/html')).text());
+          if (blobs.length) { this.insertImages(blobs, at, { sticker: false }); return; }
         }
-        const img = ci.types.find((t) => t.startsWith('image/'));
-        if (img) { const blob = await ci.getType(img); this.insertImages([new File([blob], 'pasted.png', { type: img })], at); return; }
+        if (text.trim()) { this.insertTextBox(text, at); return; }
       }
       toast('Nothing to paste');
     } catch { toast('Allow clipboard access to paste'); }
@@ -1238,12 +1489,51 @@ export class Editor {
     const dt = e.clipboardData;
     if (!dt) return;
     e.preventDefault();
-    const files = [...dt.files].filter((f) => f.type.startsWith('image/'));
-    if (files.length) { this.insertImages(files); return; }
+    this.pasteData(dt);
+  }
+
+  async pasteData(dt, at) {
+    const files = [...(dt.files || [])];
+    for (const item of dt.items || []) {
+      if (item.kind !== 'file') continue;
+      const f = item.getAsFile();
+      if (f && !files.some((x) => x.size === f.size && x.type === f.type)) files.push(f);
+    }
     const text = dt.getData('text/plain');
-    if (clipboard && (!text || text === CLIP_PREFIX + clipboard.id)) { this.paste(); return; }
-    if (text && !text.startsWith(CLIP_PREFIX)) this.insertTextBox(text);
-    else if (clipboard) this.paste();
+    if (clipboard && text === CLIP_PREFIX + clipboard.id) { this.paste(at); return; }
+    if (await this.insertFiles(files, at, { pasted: true })) return;
+    const html = dt.getData('text/html');
+    if (html) {
+      const blobs = await imagesFromHTML(html);
+      if (blobs.length) { this.insertImages(blobs, at, { sticker: false }); return; }
+    }
+    if (text && !text.startsWith(CLIP_PREFIX)) this.insertTextBox(text, at);
+    else if (clipboard) this.paste(at);
+    else toast('Nothing to paste');
+  }
+
+  // Pictures, audio and PDFs from paste / drop / file pickers.
+  async insertFiles(files, at, { pasted = false } = {}) {
+    const imgs = files.filter((f) => f.type.startsWith('image/'));
+    const audio = files.filter((f) => f.type.startsWith('audio/') || /\.(m4a|mp3|wav|aac|ogg|oga|opus|webm|caf|flac)$/i.test(f.name || ''));
+    const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
+    if (imgs.length) await this.insertImages(imgs, at, pasted ? { sticker: false } : {});
+    if (audio.length) await this.addAudio(audio, at);
+    for (const pdf of pdfs) {
+      if (pasted) await this.insertPDFAsImages(pdf, at);
+      else await this.insertPDF(pdf);
+    }
+    return imgs.length + audio.length + pdfs.length > 0;
+  }
+
+  // A PDF on the clipboard (e.g. copied from Notability) lands as pictures you can move & resize.
+  async insertPDFAsImages(file, at) {
+    const pd = progressDialog('Pasting…');
+    try {
+      const pages = await importPDF(file, (i, n) => pd.set(i / n));
+      await this.insertImages(pages.slice(0, 20).map((r) => r.blob), at, { sticker: false });
+    } catch (e) { toast(e.message || 'Could not paste that PDF'); }
+    pd.close();
   }
 
   // Procreate-style copy & paste menu (three-finger swipe down).
@@ -1270,7 +1560,8 @@ export class Editor {
     for (const it of items) {
       it.id = uid();
       it.z = ++this.body.zc;
-      delete it.rec; delete it.t;
+      if (it.type !== 'audio') delete it.rec;
+      delete it.t;
       if (offset) transformItem(it, { dx: offset, dy: offset });
       page.items.push(it);
     }
@@ -1352,7 +1643,7 @@ export class Editor {
     ta.style.lineHeight = '1.3';
     ta.style.textAlign = item.align || 'left';
     ta.style.textDecoration = item.underline ? 'underline' : 'none';
-    ta.style.color = item.color;
+    ta.style.color = inkColor(item.color, isDarkPaper(o.page.color) && !o.page.bg);
     this.sizeTextarea();
   }
 
@@ -1360,6 +1651,44 @@ export class Editor {
     const ta = this.textarea;
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
+    if (!this.textEdit) return;
+    const left = parseFloat(ta.style.left), top = parseFloat(ta.style.top), w = parseFloat(ta.style.width);
+    this.textGrip.hidden = this.textWidthGrip.hidden = false;
+    this.textGrip.style.transform = `translate(${left - 34}px, ${top - 6}px)`;
+    this.textWidthGrip.style.transform = `translate(${left + w + 2}px, ${top}px)`;
+    this.textWidthGrip.style.height = Math.max(24, ta.offsetHeight) + 'px';
+  }
+
+  // Drag the grip to move the text box, or its right edge to change the width.
+  bindTextGrip(el, kind) {
+    let start = null;
+    el.addEventListener('pointerdown', (e) => {
+      if (!this.textEdit) return;
+      e.preventDefault(); e.stopPropagation();
+      try { el.setPointerCapture(e.pointerId); } catch {}
+      const it = this.textEdit.item;
+      start = { x: e.clientX, y: e.clientY, ix: it.x, iy: it.y, iw: it.w };
+      this.gripping = true;
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!start || !this.textEdit) return;
+      e.preventDefault();
+      const { item, o } = this.textEdit, s = this.cam.s;
+      const dx = (e.clientX - start.x) / s, dy = (e.clientY - start.y) / s;
+      if (kind === 'move') {
+        item.x = clamp(start.ix + dx, -item.w + 30, o.page.w - 30);
+        item.y = clamp(start.iy + dy, 0, o.page.h - 20);
+      } else item.w = clamp(start.iw + dx, 40, o.page.w * 1.5);
+      this.placeTextarea();
+    });
+    const end = () => {
+      if (!start) return;
+      start = null;
+      setTimeout(() => { this.gripping = false; if (this.textEdit) this.textarea.focus({ preventScroll: true }); }, 0);
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    el.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
   }
 
   commitText() {
@@ -1368,6 +1697,7 @@ export class Editor {
     this.textEdit = null;
     const ta = this.textarea;
     ta.hidden = true;
+    this.textGrip.hidden = this.textWidthGrip.hidden = true;
     if (document.activeElement === ta) ta.blur();
     this.hidden = null;
     const page = te.o.page, item = te.item;
@@ -1398,19 +1728,47 @@ export class Editor {
     if (files.length) this.insertImages(files);
   }
 
+  takePhoto() {
+    const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: { display: 'none' } });
+    input.addEventListener('change', () => { if (input.files.length) this.insertImages([...input.files]); input.remove(); });
+    document.body.append(input);
+    input.click();
+  }
+
+  async pickAudio() {
+    const files = await pickFile('audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm,.caf', true);
+    if (files.length) this.addAudio(files);
+  }
+
+  insertMenu(anchor) {
+    menu(anchor, [
+      { label: 'Photo or image…', icon: 'image', onClick: () => this.pickImages() },
+      { label: 'Take photo', icon: 'camera', onClick: () => this.takePhoto() },
+      { label: 'Audio file…', icon: 'audio', onClick: () => this.pickAudio() },
+      { label: this.rec ? 'Stop recording' : 'Record audio', icon: 'mic', onClick: () => this.toggleRecord() },
+      { label: 'Text box', icon: 'text', onClick: () => this.setTool('text') },
+      { label: 'Paste', icon: 'paste', onClick: () => this.paste() },
+      '-',
+      { label: 'New pictures look like stickers', checked: settings.stickerImages !== false, onClick: () => { settings.stickerImages = settings.stickerImages === false; saveSettings(); } },
+      '-',
+      { label: 'PDF pages…', icon: 'pdf', onClick: () => this.insertPDF() },
+      { label: 'Images as pages…', icon: 'pages', onClick: () => this.insertImagePages() },
+    ]);
+  }
+
   async onDrop(e) {
     e.preventDefault();
     const files = [...(e.dataTransfer?.files || [])];
     const r = this.liveCv.getBoundingClientRect();
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
-    const imgs = files.filter((f) => f.type.startsWith('image/'));
-    const pdf = files.find((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-    if (imgs.length) this.insertImages(imgs, at);
-    if (pdf) this.insertPDF(pdf);
-    if (!files.length) { const text = e.dataTransfer.getData('text/plain'); if (text) this.insertTextBox(text, at); }
+    if (files.length) { this.insertFiles(files, at); return; }
+    const html = e.dataTransfer.getData('text/html');
+    if (html) { const blobs = await imagesFromHTML(html); if (blobs.length) { this.insertImages(blobs, at); return; } }
+    const text = e.dataTransfer.getData('text/plain');
+    if (text) this.insertTextBox(text, at);
   }
 
-  async insertImages(files, at) {
+  async insertImages(files, at, { sticker = settings.stickerImages !== false } = {}) {
     const d = at ? this.screenToDoc(at.x, at.y) : this.screenToDoc(this.vw / 2, this.vh / 2);
     const o = this.pageAt(d.x, d.y) || this.lay[this.currentIndex()];
     const page = o.page;
@@ -1427,7 +1785,7 @@ export class Editor {
         if (hh > page.h * 0.6) { hh = page.h * 0.6; w = hh / ratio; }
         const off = added.length * 24;
         const item = {
-          id: uid(), type: 'image', asset: id, w, h: hh, z: ++this.body.zc,
+          id: uid(), type: 'image', asset: id, w, h: hh, z: ++this.body.zc, sticker: sticker || undefined,
           x: clamp(d.x - o.x - w / 2 + off, 0, page.w - w),
           y: clamp(d.y - o.y - hh / 2 + off, 0, Math.max(0, page.h - hh)),
         };
@@ -1436,9 +1794,57 @@ export class Editor {
       } catch { toast('Could not open that image'); }
     }
     if (!added.length) return;
+    added.forEach((i) => { if (!i.sticker) delete i.sticker; });
     this.pushOp({ kind: 'items', page: page.id, add: added.map((i) => structuredClone(i)), remove: [] });
     this.markDirty(page);
     this.select(o, added.map((i) => i.id));
+  }
+
+  // ---- audio clips on the page ----
+
+  audioChip(o, rec, lx, ly) {
+    const w = 230, hh = 54;
+    return {
+      id: uid(), type: 'audio', rec: rec.id, label: rec.name, dur: Math.round(rec.duration || 0), w, h: hh, z: ++this.body.zc,
+      x: clamp(lx - w / 2, 0, Math.max(0, o.page.w - w)), y: clamp(ly - hh / 2, 0, Math.max(0, o.page.h - hh)),
+    };
+  }
+
+  async addAudio(files, at) {
+    const pt = at || { x: this.vw / 2, y: this.vh / 2 };
+    const d = this.screenToDoc(pt.x, pt.y);
+    const o = this.pageAt(d.x, d.y) || this.lay[this.currentIndex()];
+    const added = [];
+    let last;
+    for (const f of files) {
+      try {
+        const asset = await putAsset(uid(), f);
+        last = { id: uid(), asset, duration: await audioDuration(f), created: Date.now(), name: String(f.name && f.name !== 'pasted' ? f.name : 'Audio').replace(/\.[^.]+$/, ''), transcript: [] };
+        this.body.recordings.push(last);
+        added.push(this.audioChip(o, last, d.x - o.x, d.y - o.y + added.length * 64));
+      } catch { toast('Could not add that audio file'); }
+    }
+    if (!added.length) return;
+    o.page.items.push(...added);
+    this.pushOp({ kind: 'items', page: o.page.id, add: added.map((i) => structuredClone(i)), remove: [] });
+    this.markDirty(o.page);
+    this.renderAudioBar(last.id);
+    this.select(o, added.map((i) => i.id));
+    toast(added.length === 1 ? 'Audio added — tap it to play' : `${added.length} audio clips added`);
+  }
+
+  // Put a recording on the page as a clip you can tap to play.
+  placeRecording(rec) {
+    const d = this.screenToDoc(this.vw / 2, this.vh / 2);
+    const o = this.pageAt(d.x, d.y) || this.lay[this.currentIndex()];
+    this.insertItems(o, [this.audioChip(o, rec, d.x - o.x, d.y - o.y)], 0);
+  }
+
+  async playAudioItem(it) {
+    const rec = this.body.recordings.find((r) => r.id === it.rec);
+    if (!rec) { toast('This recording is no longer in the note'); return; }
+    if (this.curRec !== rec.id || !this.player) { this.stopPlayback(true); this.renderAudioBar(rec.id); }
+    this.togglePlay();
   }
 
   // ---- undo ----
@@ -1452,6 +1858,11 @@ export class Editor {
   }
 
   applyOp(op, dir) {
+    if (op.kind === 'multi') {
+      const list = dir > 0 ? op.ops : op.ops.slice().reverse();
+      for (const o of list) this.applyOp(o, dir);
+      return;
+    }
     if (op.kind === 'items') {
       const page = this.pageById(op.page);
       if (!page) return;
@@ -1538,7 +1949,7 @@ export class Editor {
   duplicatePage(i = this.currentIndex()) {
     const p = structuredClone(this.pages[i]);
     p.id = uid();
-    for (const it of p.items) { it.id = uid(); delete it.rec; delete it.t; }
+    for (const it of p.items) { it.id = uid(); if (it.type !== 'audio') delete it.rec; delete it.t; }
     this.pagesOp(() => this.pages.splice(i + 1, 0, p));
     this.scrollToPage(i + 1);
   }
@@ -1610,49 +2021,97 @@ export class Editor {
     this.pagesChanged();
   }
 
-  paperMenu(anchor) {
-    const i = this.currentIndex();
-    const page = this.pages[i];
-    let scope = this._paperScope || 'page';
-    const targets = () => scope === 'all' ? this.pages.filter((p) => !p.bg) : [page];
-    const setTemplate = (id) => {
-      const props = { template: id, tpl: { ...(page.tpl || {}) } };
-      if (plannerById(id) !== plannerById(page.template) || !plannerById(id)) props.color = plannerById(id) ? plannerPaperColor(id) : (isDarkPaper(page.color) || plannerById(page.template) ? '#ffffff' : page.color);
-      this.applyPageProps(targets(), props);
-      settings.defaultTemplate = id; saveSettings();
-      this.paperMenu(anchor);
+  // Dark / light pages in one tap (like Notability). Black ink shows white on
+  // dark paper and white ink shows black on light paper; other colours stay.
+  toggleDarkMode() {
+    const toDark = !this.curDark();
+    const lightFor = (p) => {
+      if (p.lightColor && !isDarkPaper(p.lightColor)) return p.lightColor;
+      const pc = plannerById(p.template) ? plannerPaperColor(p.template) : null;
+      return pc && !isDarkPaper(pc) ? pc : '#ffffff';
     };
-    const scopeSeg = h('div', { class: 'seg' },
-      ['page', 'all'].map((v) => h('button', { class: v === scope ? 'on' : '', onClick: () => { this._paperScope = v; this.paperMenu(anchor); } }, v === 'all' ? 'All pages' : 'This page')));
-    const card = (id) => h('button', { class: 'tpl' + (page.template === id ? ' on' : ''), onClick: () => setTemplate(id) },
-      templatePreview(id, { color: plannerById(id) ? undefined : (plannerById(page.template) ? '#ffffff' : page.color), width: 76 }), h('span', {}, templateLabel(id)));
-    const papers = h('div', { class: 'tpl-grid' }, PAPERS.map((p) => card(p.id)));
-    const planners = h('div', { class: 'tpl-grid' }, PLANNERS.slice(0, 8).map((p) => card(p.id)));
-    const colors = h('div', { class: 'row wrap' }, PAPER_COLORS.map((c) => h('button', {
-      class: 'swatch' + (page.color === c.id ? ' on' : ''), title: c.label, 'aria-label': c.label, style: { background: c.id },
-      onClick: () => { this.applyPageProps(targets(), { color: c.id }); this.paperMenu(anchor); },
-    })), h('button', { class: 'swatch more', 'aria-label': 'Custom colour', html: icons.palette, onClick: (e) => colorPopover(e.currentTarget, page.color, (c, fin) => { if (fin) { this.applyPageProps(targets(), { color: c }); } }) }));
-    const isPlanner = !!plannerById(page.template);
-    const accent = isPlanner ? h('div', { class: 'row wrap' }, ACCENTS.map((c) => h('button', {
-      class: 'swatch' + ((page.tpl || {}).accent === c ? ' on' : ''), style: { background: c }, 'aria-label': c,
-      onClick: () => { this.applyPageProps(targets(), { tpl: { ...(page.tpl || {}), accent: c } }); this.paperMenu(anchor); },
-    }))) : null;
-    const titleIn = isPlanner ? h('input', { class: 'input', value: (page.tpl || {}).title || '', placeholder: 'Heading text' }) : null;
-    if (titleIn) titleIn.addEventListener('change', () => this.applyPageProps(targets(), { tpl: { ...(page.tpl || {}), title: titleIn.value } }));
-    const sizes = h('div', { class: 'row wrap' }, Object.entries(SIZES).map(([, sz]) => h('button', {
-      class: 'chip' + (page.w === sz.w && page.h === sz.h ? ' on' : ''), onClick: () => { this.applyPageProps(targets(), { w: sz.w, h: sz.h }); this.paperMenu(anchor); },
-    }, sz.label)));
-    popover(anchor, h('div', { class: 'paper-pop' },
-      h('div', { class: 'row' }, scopeSeg, h('div', { class: 'grow' }),
-        h('button', { class: 'chip', onClick: () => { closePopover(); this.addPage(i, false, { w: page.w, h: page.h, template: page.template, color: page.color, tpl: page.tpl }); } }, '+ Add page')),
-      h('h4', {}, 'Paper'), papers,
+    const changes = [];
+    for (const p of this.pages) {
+      if (p.bg || isDarkPaper(p.color) === toDark) continue;
+      const before = { color: p.color, lightColor: p.lightColor };
+      const after = toDark ? { color: DARK_PAPER, lightColor: p.color } : { color: lightFor(p), lightColor: undefined };
+      Object.assign(p, after);
+      if (p.lightColor === undefined) delete p.lightColor;
+      changes.push({ id: p.id, before, after });
+    }
+    this.crossfade();
+    if (changes.length) { this.pushOp({ kind: 'props', changes }); this.pagesChanged(); }
+    if (toDark) { if (!isDarkPaper(settings.defaultColor)) settings.lightDefaultColor = settings.defaultColor; settings.defaultColor = DARK_PAPER; }
+    else settings.defaultColor = settings.lightDefaultColor || '#ffffff';
+    settings.theme = toDark ? 'dark' : 'light';
+    saveSettings();
+    applyTheme();
+    this.renderToolbar();
+    toast(toDark ? 'Dark mode · black ink shows white' : 'Light mode · white ink shows black');
+  }
+
+  // Paper & template picker. It is built once and updated in place, so
+  // switching templates is instant (no flicker, previews are cached).
+  paperMenu(anchor) {
+    const page = this.pages[this.currentIndex()];
+    const scope = () => this._paperScope || 'page';
+    const targets = () => scope() === 'all' ? this.pages.filter((p) => !p.bg) : [page];
+    const apply = (props) => { this.crossfade(); this.applyPageProps(targets(), props); refresh(); };
+    const setTemplate = (id) => {
+      if (id === page.template && scope() === 'page') return;
+      const props = { template: id, tpl: { ...(page.tpl || {}) } };
+      if (plannerById(id) !== plannerById(page.template) || !plannerById(id)) {
+        props.color = plannerById(id) ? plannerPaperColor(id) : (plannerById(page.template) ? (isDarkPaper(page.color) ? DARK_PAPER : '#ffffff') : page.color);
+      }
+      apply(props);
+      settings.defaultTemplate = id; saveSettings();
+    };
+    const tplBtns = new Map();
+    const paperColor = () => plannerById(page.template) ? (isDarkPaper(page.color) ? DARK_PAPER : '#ffffff') : page.color;
+    let previewColor = paperColor();
+    const card = (id) => {
+      const b = h('button', { class: 'tpl', onClick: () => setTemplate(id) },
+        templatePreview(id, { color: plannerById(id) ? undefined : previewColor, width: 76 }), h('span', {}, templateLabel(id)));
+      tplBtns.set(id, b);
+      return b;
+    };
+    const scopeBtns = ['page', 'all'].map((v) => h('button', { onClick: () => { this._paperScope = v; refresh(); } }, v === 'all' ? 'All pages' : 'This page'));
+    const colorBtns = PAPER_COLORS.map((c) => [c.id, h('button', { class: 'swatch', title: c.label, 'aria-label': c.label, style: { background: c.id }, onClick: () => apply({ color: c.id }) })]);
+    const accentBtns = ACCENTS.map((c) => [c, h('button', { class: 'swatch', style: { background: c }, 'aria-label': c, onClick: () => apply({ tpl: { ...(page.tpl || {}), accent: c } }) })]);
+    const titleIn = h('input', { class: 'input', placeholder: 'Heading text' });
+    titleIn.addEventListener('change', () => apply({ tpl: { ...(page.tpl || {}), title: titleIn.value } }));
+    const sizeBtns = Object.values(SIZES).map((sz) => [sz, h('button', { class: 'chip', onClick: () => { apply({ w: sz.w, h: sz.h }); this.fitWidth(false); } }, sz.label)]);
+    const plannerBox = h('div', {}, h('h4', {}, 'Accent colour'), h('div', { class: 'row wrap' }, accentBtns.map((x) => x[1])), h('h4', {}, 'Heading'), titleIn);
+    const refresh = () => {
+      scopeBtns.forEach((b, k) => b.classList.toggle('on', ['page', 'all'][k] === scope()));
+      for (const [id, b] of tplBtns) b.classList.toggle('on', page.template === id);
+      const pc = paperColor();
+      if (pc !== previewColor) {
+        previewColor = pc;
+        for (const p of PAPERS) { const b = tplBtns.get(p.id); b.querySelector('canvas').replaceWith(templatePreview(p.id, { color: pc, width: 76 })); }
+      }
+      colorBtns.forEach(([c, b]) => b.classList.toggle('on', page.color === c));
+      sizeBtns.forEach(([sz, b]) => b.classList.toggle('on', page.w === sz.w && page.h === sz.h));
+      const isPlanner = !!plannerById(page.template);
+      plannerBox.hidden = !isPlanner;
+      accentBtns.forEach(([c, b]) => b.classList.toggle('on', (page.tpl || {}).accent === c));
+      if (document.activeElement !== titleIn) titleIn.value = (page.tpl || {}).title || '';
+    };
+    const pop = h('div', { class: 'paper-pop' },
+      h('div', { class: 'row' }, h('div', { class: 'seg' }, scopeBtns), h('div', { class: 'grow' }),
+        h('button', { class: 'chip', onClick: () => { closePopover(); this.toggleDarkMode(); } }, h('span', { html: icons[this.curDark() ? 'sun' : 'moon'] }), this.curDark() ? 'Light' : 'Dark'),
+        h('button', { class: 'chip', onClick: () => { closePopover(); this.addPage(this.currentIndex(), false, { w: page.w, h: page.h, template: page.template, color: page.color, tpl: page.tpl }); } }, '+ Add page')),
+      h('h4', {}, 'Paper'), h('div', { class: 'tpl-grid' }, PAPERS.map((p) => card(p.id))),
       h('div', { class: 'row' }, h('h4', {}, 'Planners'), h('div', { class: 'grow' }),
         h('button', { class: 'chip', onClick: () => { closePopover(); this.templateGalleryForPages(); } }, 'All templates…')),
-      planners,
-      isPlanner ? h('h4', {}, 'Accent colour') : null, accent,
-      isPlanner ? h('h4', {}, 'Heading') : null, titleIn,
-      h('h4', {}, 'Paper colour'), colors,
-      h('h4', {}, 'Size & orientation'), sizes), { className: 'wide' });
+      h('div', { class: 'tpl-grid' }, PLANNERS.slice(0, 8).map((p) => card(p.id))),
+      plannerBox,
+      h('h4', {}, 'Paper colour'),
+      h('div', { class: 'row wrap' }, colorBtns.map((x) => x[1]),
+        h('button', { class: 'swatch more', 'aria-label': 'Custom colour', html: icons.palette, onClick: (e) => colorPopover(e.currentTarget, page.color, (c, fin) => { if (fin) apply({ color: c }); }) })),
+      h('h4', {}, 'Size & orientation'), h('div', { class: 'row wrap' }, sizeBtns.map((x) => x[1])));
+    refresh();
+    popover(anchor, pop, { className: 'wide' });
   }
 
   templateGalleryForPages() {
@@ -1704,6 +2163,8 @@ export class Editor {
       ['Three-finger swipe down', 'Copy & paste menu'], ['Four-finger tap', 'Full screen on / off'],
       ['Pinch', 'Zoom (quick pinch in = fit width)'], ['Draw & hold', 'Perfect shape'],
       ['Lasso tap on empty space', 'Paste here'], ['Stylus eraser end / button', 'Erase'],
+      ['Finger tap on a picture / text', 'Select it (drag to move, corners to resize)'],
+      ['Tap an audio clip', 'Play it'], ['Text tool: drag a text box', 'Move it'],
     ];
     popover(this.optsEl, h('div', { class: 'help-pop' }, h('h4', {}, 'Gestures'),
       h('table', {}, rows.map(([a, b]) => h('tr', {}, h('td', {}, a), h('td', {}, b))))), { className: 'wide' });
@@ -1809,7 +2270,8 @@ export class Editor {
     const t = this.tool;
     const cfg = settings.tools[t];
     const swatches = () => cfg.colors.forEach((c, i) => {
-      const sw = h('button', { class: 'swatch' + (i === cfg.color ? ' on' : ''), style: { background: c }, title: i === cfg.color ? 'Tap again for more colours' : 'Colour', 'aria-label': 'Colour ' + (i + 1) });
+      const shown = t === 'pen' || t === 'text' ? inkColor(c, this.curDark()) : c;
+      const sw = h('button', { class: 'swatch' + (i === cfg.color ? ' on' : ''), style: { background: shown }, title: i === cfg.color ? 'Tap again for more colours' : 'Colour', 'aria-label': 'Colour ' + (i + 1) });
       sw.addEventListener('click', () => {
         if (i === cfg.color) {
           colorPopover(sw, c, (nc, fin) => { cfg.colors[i] = nc; if (fin) { saveSettings(); this.renderToolbar(); if (t === 'text') this.applyTextStyle({ color: nc }); } else sw.style.background = nc; });
@@ -1830,7 +2292,7 @@ export class Editor {
     if (t === 'pen' || t === 'hl') {
       swatches();
       O.append(h('div', { class: 'tb-sep sm' }));
-      sizes((sz) => { const d = Math.min(22, 3 + (t === 'hl' ? sz / 2 : sz * 2.4)); return h('span', { class: 'size-dot', style: { width: d + 'px', height: d + 'px', background: cfg.colors[cfg.color], opacity: t === 'hl' ? 0.6 : 1 } }); });
+      sizes((sz) => { const d = Math.min(22, 3 + (t === 'hl' ? sz / 2 : sz * 2.4)); return h('span', { class: 'size-dot', style: { width: d + 'px', height: d + 'px', background: t === 'pen' ? inkColor(cfg.colors[cfg.color], this.curDark()) : cfg.colors[cfg.color], opacity: t === 'hl' ? 0.6 : 1 } }); });
       if (t === 'pen') O.append(h('button', { class: 'chip', onClick: () => this.toolOptions('pen') }, { fountain: 'Fountain', ball: 'Ballpoint', dash: 'Dashed' }[cfg.style || 'fountain']));
     } else if (t === 'text') {
       const st = this.textEdit ? this.textEdit.item : cfg;
@@ -1978,6 +2440,7 @@ export class Editor {
       this.playBtn,
       h('button', { class: 'icon-btn sm', title: 'Forward 10 s', onClick: () => this.seekTo((this.playback ? this.playback.ms : 0) + 10000) }, '+10'),
       this.seek, this.timeEl, speedBtn,
+      h('button', { class: 'icon-btn sm', title: 'Place on page (tap the clip to play)', 'aria-label': 'Place on page', html: icons.insert, onClick: () => this.placeRecording(rec) }),
       h('button', { class: 'icon-btn sm', title: 'Transcript', 'aria-label': 'Transcript', html: icons.transcript, onClick: (e) => this.transcriptPanel(e.currentTarget, rec) }),
       h('button', { class: 'icon-btn sm', title: 'Rename recording', 'aria-label': 'Rename recording', html: icons.text, onClick: () => { const n = prompt('Recording name', rec.name); if (n) { rec.name = n; this.changed(); this.renderAudioBar(); } } }),
       h('button', { class: 'icon-btn sm', title: 'Download audio', 'aria-label': 'Download audio', html: icons.download, onClick: async () => { const b = await getAssetBlob(rec.asset); if (b) saveFile(b, `${safeName(rec.name)}.${(b.type.split('/')[1] || 'webm').split(';')[0]}`); } }),
@@ -2006,6 +2469,7 @@ export class Editor {
     a.__rec = rec.id;
     a.preload = 'auto';
     a.playbackRate = this.speed || 1;
+    a.onloadedmetadata = () => { if (!rec.duration && Number.isFinite(a.duration)) { rec.duration = a.duration; this.changed(); } };
     a.onended = () => { this.playBtn.innerHTML = icons.play; cancelAnimationFrame(this.pbRaf); this.updatePlayback(rec.duration * 1000); };
     this.player = a;
     this.recTimes = [];
@@ -2081,6 +2545,12 @@ export class Editor {
     this.stopPlayback(true);
     this.body.recordings = this.body.recordings.filter((r) => r.id !== rec.id);
     for (const p of this.pages) for (const it of p.items) if (it.rec === rec.id) { delete it.rec; delete it.t; }
+    for (const o of this.lay) {
+      const n = o.page.items.length;
+      o.page.items = o.page.items.filter((it) => !(it.type === 'audio' && it.rec === rec.id));
+      if (o.page.items.length !== n) this.markDirty(o.page);
+    }
+    this.clearSelection();
     this.changed();
     this.renderAudioBar();
   }
@@ -2097,8 +2567,10 @@ export class Editor {
     try {
       this.dirty = false;
       await saveNote(this.meta, this.body);
+      this.baseIds = bodyIds(this.body);
       if (performance.now() - this.lastThumb > 20000) {
         this.lastThumb = performance.now();
+        await new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: 2000 }) : setTimeout(r, 200)));
         this.meta.thumb = await makeThumb(this.body);
         await db.put('notes', this.meta);
       }
@@ -2108,16 +2580,49 @@ export class Editor {
     } finally { this.saving = false; }
   }
 
+  // Called by the sync engine right before it syncs, so nothing unsaved is missed.
+  async flushSave() {
+    if (!this.dirty || this.pointers.size || this.live || this.erase || this.drag) return;
+    this.save.cancel();
+    await this.persist();
+  }
+
   isBusy() { return this.dirty || this.saving || this.pointers.size > 0 || !!this.textEdit || !!this.rec; }
 
-  // Another device changed this note: show the new version.
+  renderSyncPill(st) {
+    const P = this.syncPill;
+    if (!P) return;
+    const offline = !navigator.onLine || st.state === 'offline';
+    const view = offline ? ['cloudOff', 'Offline · saved on this device', 'off']
+      : st.state === 'syncing' ? ['sync', 'Syncing…', 'busy']
+      : st.state === 'synced' ? ['cloud', 'Synced', 'ok']
+      : st.state === 'error' ? ['cloudOff', 'Sync paused · saved on this device', 'off'] : null;
+    P.hidden = !view;
+    if (!view) return;
+    P.className = 'sync-pill ' + view[2];
+    P.title = view[1];
+    P.innerHTML = icons[view[0]];
+    P.append(h('span', {}, offline ? 'Offline' : view[2] === 'busy' ? 'Syncing' : view[2] === 'ok' ? 'Synced' : 'Paused'));
+  }
+
+  // Another device changed this note. Its changes are merged into what is on
+  // screen (nothing you wrote, even offline, is thrown away).
   applyRemote(meta, body) {
-    if (this.isBusy()) return false;
-    Object.assign(this.meta, meta);
-    this.titleInput.value = this.meta.title;
-    this.body = body;
-    body.recordings = body.recordings || [];
-    this.pages = body.pages;
+    if (this.pointers.size || this.live || this.erase || this.drag || this.textEdit || this.saving) {
+      clearTimeout(this.remoteT);
+      this.remoteT = setTimeout(() => this.reloadFromDB(), 1200);
+      return false;
+    }
+    const merged = mergeBodies(this.body, body, this.baseIds, this.dirty);
+    const titleFocused = document.activeElement === this.titleInput;
+    const { thumb, ...rest } = meta;
+    Object.assign(this.meta, rest);
+    if (!titleFocused) this.titleInput.value = this.meta.title;
+    this.body.pages.length = 0;
+    this.body.pages.push(...merged.pages);
+    this.body.recordings = merged.recordings;
+    this.body.zc = merged.zc;
+    this.baseIds = bodyIds(body);
     this.undoStack.length = this.redoStack.length = 0;
     this.clearSelection();
     for (const c of this.caches.values()) c.canvas.width = c.canvas.height = 0;
@@ -2126,9 +2631,17 @@ export class Editor {
     this.clampCam();
     this.updateUndo();
     this.renderAudioBar();
+    if (!this.pagesPanel.hidden) this.renderPagesPanel();
     this.requestRender();
-    toast('Updated from another device');
+    if (this.dirty) this.changed();
+    toast('Synced changes from another device');
     return true;
+  }
+
+  async reloadFromDB() {
+    const meta = await db.get('notes', this.meta.id);
+    const body = await db.get('bodies', this.meta.id);
+    if (meta && body && this.el.isConnected) this.applyRemote(meta, body);
   }
 
   async exit() {
@@ -2145,6 +2658,8 @@ export class Editor {
   }
 
   destroy() {
+    clearTimeout(this.remoteT);
+    if (this.unsubSync) this.unsubSync();
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('paste', this.onPaste);
@@ -2182,4 +2697,37 @@ async function downscale(file, max) {
   const blob = await new Promise((r) => c.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.88));
   c.width = c.height = 0;
   return blob || file;
+}
+
+// Duration of an audio file in seconds (0 if the browser can't tell).
+function audioDuration(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const a = new Audio();
+    const done = (v) => { clearTimeout(t); URL.revokeObjectURL(url); resolve(Number.isFinite(v) ? v : 0); };
+    const t = setTimeout(() => done(0), 5000);
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => done(a.duration);
+    a.onerror = () => done(0);
+    a.src = url;
+  });
+}
+
+// Pictures inside copied web / app content (data: URLs or downloadable links).
+async function imagesFromHTML(html) {
+  let doc;
+  try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch { return []; }
+  const out = [];
+  for (const img of [...doc.images].slice(0, 12)) {
+    const src = img.getAttribute('src') || '';
+    try {
+      if (src.startsWith('data:image/')) out.push(await (await fetch(src)).blob());
+      else if (/^https?:|^blob:/.test(src)) {
+        const res = await fetch(src, { mode: 'cors' });
+        const b = res.ok ? await res.blob() : null;
+        if (b && b.type.startsWith('image/')) out.push(b);
+      }
+    } catch {}
+  }
+  return out;
 }

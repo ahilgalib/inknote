@@ -600,14 +600,27 @@ export function templateLabel(id) {
   return (plannerById(id) || PAPERS.find((p) => p.id === id) || { label: id }).label;
 }
 
-// Preview canvas for pickers.
+// Preview canvas for pickers. Previews are cached (planners are expensive to
+// draw), so switching templates and reopening pickers stays instant.
+const previewCache = new Map();
+if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => previewCache.clear());
 export function templatePreview(id, { color, tpl, w = 816, h = 1056, width = 180 } = {}) {
-  const c = document.createElement('canvas');
-  const scale = width / w;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  c.width = Math.round(w * scale * dpr); c.height = Math.round(h * scale * dpr);
-  const ctx = c.getContext('2d');
-  ctx.scale(scale * dpr, scale * dpr);
-  drawPaper(ctx, { w, h, template: id, color: color || (plannerById(id) ? plannerPaperColor(id) : '#ffffff'), tpl });
+  const col = color || (plannerById(id) ? plannerPaperColor(id) : '#ffffff');
+  const key = [id, col, tpl ? JSON.stringify(tpl) : '', w, h, width, dpr].join('|');
+  let src = previewCache.get(key);
+  if (!src) {
+    src = document.createElement('canvas');
+    const scale = width / w;
+    src.width = Math.round(w * scale * dpr); src.height = Math.round(h * scale * dpr);
+    const ctx = src.getContext('2d');
+    ctx.scale(scale * dpr, scale * dpr);
+    drawPaper(ctx, { w, h, template: id, color: col, tpl });
+    previewCache.set(key, src);
+    if (previewCache.size > 160) previewCache.delete(previewCache.keys().next().value);
+  }
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  c.getContext('2d').drawImage(src, 0, 0);
   return c;
 }

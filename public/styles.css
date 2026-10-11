@@ -310,6 +310,19 @@ button.act-card:hover { border-color: var(--accent); }
 .stage { flex: 1; position: relative; overflow: hidden; min-width: 0; background: var(--stage); touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .stage canvas { position: absolute; left: 0; top: 0; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .cv-live { z-index: 2; }
+.cv-fade { z-index: 1; pointer-events: none; opacity: 1; transition: opacity .3s ease; }
+.text-grip { position: absolute; left: 0; top: 0; z-index: 4; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--accent); color: #fff; box-shadow: var(--shadow); cursor: grab; touch-action: none; }
+.text-grip svg { width: 18px; height: 18px; }
+.text-wgrip { position: absolute; left: 0; top: 0; z-index: 4; width: 14px; cursor: ew-resize; touch-action: none; display: flex; align-items: center; justify-content: center; }
+.text-wgrip::after { content: ''; width: 5px; height: 26px; max-height: 80%; border-radius: 3px; background: var(--accent); }
+.sel-btn.primary { background: var(--accent); color: #fff; }
+.sel-btn.primary small { color: #fff; }
+.sync-pill { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 9px 0 7px; border-radius: 99px; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--hover); white-space: nowrap; flex: none; }
+.sync-pill svg { width: 16px; height: 16px; }
+.sync-pill.ok { color: #1f8a4c; }
+.sync-pill.busy svg { animation: spin 1s linear infinite; }
+.sync-pill.off { color: #b4690e; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .text-edit { position: absolute; z-index: 3; border: 1.5px dashed var(--accent); border-radius: 4px; background: transparent; outline: 0; resize: none; overflow: hidden; padding: 0; margin: -2px 0 0 -2px; min-height: 1.3em; -webkit-user-select: text; user-select: text; touch-action: auto; }
 .sel-menu { position: absolute; left: 0; top: 0; z-index: 4; display: flex; align-items: center; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 4px; }
 .sel-btn { min-width: 50px; height: 46px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0 4px; }
@@ -362,5 +375,7 @@ button.act-card:hover { border-color: var(--accent); }
   .audio-bar .rec-select { max-width: 110px; }
   .sel-btn { min-width: 42px; }
   .sel-btn small { display: none; }
+  .sync-pill span { display: none; }
+  .sync-pill { padding: 0 6px; }
 }
 @media print { .ed-top, .ed-toolbar, .audio-bar { display: none; } }

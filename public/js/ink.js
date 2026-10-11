@@ -5,6 +5,27 @@
 
 const cache = new WeakMap(); // item -> { path, bbox }
 
+// Auto ink: the default black ink shows as white on dark paper and white ink
+// shows as black on light paper (like Notability). Other colours never change.
+const lumCache = new Map();
+function lum(hex) {
+  let v = lumCache.get(hex);
+  if (v !== undefined) return v;
+  const c = String(hex).replace('#', '');
+  v = c.length >= 6 ? (parseInt(c.slice(0, 2), 16) * 299 + parseInt(c.slice(2, 4), 16) * 587 + parseInt(c.slice(4, 6), 16) * 114) / 1000 : -1;
+  lumCache.set(hex, v);
+  return v;
+}
+export const DARK_INK = '#f4f4f6';
+export const LIGHT_INK = '#1d1d1f';
+export function inkColor(color, dark) {
+  const l = lum(color);
+  if (l < 0) return color;
+  if (dark && l < 48) return DARK_INK;
+  if (!dark && l > 232) return LIGHT_INK;
+  return color;
+}
+
 export const round2 = (v) => Math.round(v * 100) / 100;
 
 export function penRadius(size, p, style) {
@@ -165,17 +186,18 @@ export function drawStroke(ctx, it, alpha = 1, path) {
     ctx.lineJoin = 'round';
     ctx.stroke(path);
   } else if (it.shape || it.style === 'dash') {
+    const col = inkColor(it.color, ctx.__dark);
     ctx.globalAlpha = alpha;
-    ctx.strokeStyle = it.color;
+    ctx.strokeStyle = col;
     ctx.lineWidth = Math.max(0.6, it.size * 0.8);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     if (it.style === 'dash') ctx.setLineDash([it.size * 2.6, it.size * 2.2]);
     ctx.stroke(path);
-    if (it.fill) { ctx.setLineDash([]); ctx.globalAlpha = alpha * 0.22; ctx.fillStyle = it.color; ctx.fill(path); }
+    if (it.fill) { ctx.setLineDash([]); ctx.globalAlpha = alpha * 0.22; ctx.fillStyle = col; ctx.fill(path); }
   } else {
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = it.color;
+    ctx.fillStyle = inkColor(it.color, ctx.__dark);
     ctx.fill(path);
   }
   ctx.restore();

@@ -1,6 +1,6 @@
 // Offline support: the whole app (incl. pdf.js) is cached, Google Fonts are
 // cached the first time they are used. The sync API is never cached.
-const VERSION = 'inknote-v2';
+const VERSION = 'inknote-v3';
 const FONTS = 'inknote-fonts';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',

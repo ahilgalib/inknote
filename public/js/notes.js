@@ -26,6 +26,51 @@ export function newPage(opts = {}) {
   };
 }
 
+// ---- merging (offline edits on several devices) ------------------------------
+
+// Every page, item and recording id in a note body.
+export function bodyIds(body) {
+  const ids = new Set();
+  for (const p of body.pages || []) { ids.add('p:' + p.id); for (const it of p.items || []) ids.add(it.id); }
+  for (const r of body.recordings || []) ids.add('r:' + r.id);
+  return ids;
+}
+
+// Merge two versions of a note. `base` holds the ids both sides had when they
+// last agreed: something missing on one side that was in base was deleted
+// there; something that is not in base is new and is kept. Items changed on
+// both sides take the preferred side's version.
+export function mergeBodies(local, remote, base, preferLocal) {
+  base = base instanceof Set ? base : new Set(base || []);
+  const keepOne = (id) => !base.has(id); // present on one side only
+  const A = preferLocal ? local : remote, B = preferLocal ? remote : local;
+  const bPages = new Map((B.pages || []).map((p) => [p.id, p]));
+  const aIds = new Set((A.pages || []).map((p) => p.id));
+  const order = (A.pages || []).filter((p) => bPages.has(p.id) || keepOne('p:' + p.id)).map((p) => p.id);
+  (B.pages || []).forEach((p, i) => {
+    if (aIds.has(p.id) || !keepOne('p:' + p.id)) return;
+    let pos = i === 0 ? 0 : order.length;
+    for (let j = i - 1; j >= 0; j--) { const k = order.indexOf(B.pages[j].id); if (k >= 0) { pos = k + 1; break; } }
+    order.splice(pos, 0, p.id);
+  });
+  const aPages = new Map((A.pages || []).map((p) => [p.id, p]));
+  const pages = order.map((id) => {
+    const pa = aPages.get(id), pb = bPages.get(id);
+    if (!pa || !pb) return pa || pb;
+    const bItems = new Map(pb.items.map((i) => [i.id, i]));
+    const aItemIds = new Set(pa.items.map((i) => i.id));
+    const items = pa.items.filter((i) => bItems.has(i.id) || keepOne(i.id));
+    for (const it of pb.items) if (!aItemIds.has(it.id) && keepOne(it.id)) items.push(it);
+    items.sort((x, y) => (x.z || 0) - (y.z || 0));
+    return { ...pa, items };
+  });
+  const aRecs = A.recordings || [], bRecs = B.recordings || [];
+  const bRecIds = new Set(bRecs.map((r) => r.id)), aRecIds = new Set(aRecs.map((r) => r.id));
+  const recordings = aRecs.filter((r) => bRecIds.has(r.id) || keepOne('r:' + r.id))
+    .concat(bRecs.filter((r) => !aRecIds.has(r.id) && keepOne('r:' + r.id)));
+  return { ...A, id: local.id, pages: pages.length ? pages : (A.pages || []).slice(0, 1), recordings, zc: Math.max(local.zc || 0, remote.zc || 0) };
+}
+
 export function defaultTitle() {
   const d = new Date();
   return 'Note ' + d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -77,6 +122,7 @@ export async function restoreNote(meta) { delete meta.trashed; await touchMeta(m
 export async function deleteForever(id) {
   await db.del('notes', id);
   await db.del('bodies', id);
+  await db.del('bases', id).catch(() => {});
   await db.put('tombstones', { id: 'note:' + id, kind: 'note', itemId: id, updated: Date.now() });
   localChanged();
   collectGarbage().catch(() => {});

@@ -5,9 +5,10 @@
 //   subjects   – folders
 //   assets     – binary blobs (images, PDF page renders, audio, fonts)
 //   tombstones – deletions waiting to be synced
+//   bases      – ids each note had at its last sync (for merging offline edits)
 
 const DB_NAME = 'inknote';
-const VERSION = 1;
+const VERSION = 2;
 let dbp;
 
 function open() {
@@ -16,12 +17,18 @@ function open() {
     const req = indexedDB.open(DB_NAME, VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const name of ['notes', 'bodies', 'subjects', 'assets', 'tombstones']) {
+      for (const name of ['notes', 'bodies', 'subjects', 'assets', 'tombstones', 'bases']) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      // another tab opened a newer version: let it upgrade, reopen next time
+      db.onversionchange = () => { db.close(); dbp = null; };
+      resolve(db);
+    };
+    req.onerror = () => { dbp = null; reject(req.error); };
+    req.onblocked = () => console.warn('Inknote: close other tabs to finish updating storage');
   });
   return dbp;
 }

@@ -5,7 +5,7 @@ import { applyTheme } from './settings.js';
 import { Library } from './library.js';
 import { Editor } from './editor.js';
 import { toast } from './util.js';
-import { startSync } from './sync.js';
+import { startSync, setBeforeSync } from './sync.js';
 import { loadInstalledFonts } from './fonts.js';
 
 const root = document.getElementById('app');
@@ -13,6 +13,8 @@ let view = null;
 
 applyTheme();
 requestPersistence();
+// save what is on screen before every sync, so offline work is never missed
+setBeforeSync(() => (view instanceof Editor ? view.flushSave() : null));
 loadInstalledFonts();
 startSync();
 
