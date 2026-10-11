@@ -1,11 +1,16 @@
 {
-  "name": "inkwell-notes",
-  "version": "1.0.0",
-  "description": "Free, open-source handwritten notes for iPad + Apple Pencil, phones and desktop.",
+  "name": "inknote",
+  "version": "2.0.0",
+  "description": "Free, open-source Notability-style handwritten notes for iPad + Apple Pencil, phones and desktop.",
   "private": true,
-  "type": "module",
   "license": "MIT",
   "scripts": {
-    "start": "node dev-server.mjs"
+    "dev": "wrangler pages dev public --port 8801",
+    "db:local": "wrangler d1 execute inknote --local --file schema.sql",
+    "db:remote": "wrangler d1 execute inknote --remote --file schema.sql",
+    "deploy": "wrangler pages deploy public --project-name inknote --branch main --commit-dirty=true"
+  },
+  "devDependencies": {
+    "wrangler": "4.148.0"
   }
 }

@@ -1,106 +1,80 @@
-# Inkwell Notes
+# Inknote
 
-**Free, open-source handwritten notes for iPad + Apple Pencil, phones and desktop.**
-A Notability-style note app that runs in the browser, installs to your home screen, and works fully offline. No account, no server: your notes stay on your device.
+**Free, open-source handwritten notes for iPad + Apple Pencil, phones and desktop — like Notability.**
+Works offline, installs to your home screen, and syncs automatically across all your devices.
 
-**Live app:** https://inkwell-notes.mahilgalib.workers.dev
+**Live app:** https://inknote.pages.dev
 
-![Inkwell icon](icons/icon-192.png)
+![Inknote icon](public/icons/icon-192.png)
 
 ## Features
 
-**Writing**
-- Smooth, pressure-sensitive ink tuned for Apple Pencil (uses coalesced and predicted pointer events for low latency)
-- Palm rejection: once a Pencil is detected, fingers only scroll and zoom (configurable: Auto / On / Off)
-- Pen, highlighter (drawn under the ink), and eraser (whole stroke or precise/partial)
-- **Draw & hold** to turn a rough stroke into a clean line, circle, ellipse, rectangle, triangle or polygon
-- 5 favourite colours and 3 sizes per tool; tap a selected colour to pick any colour
-- Lasso: select ink, text and images, then move, resize, recolour, duplicate, copy/cut/paste or delete
-- Text boxes (sans, serif, mono, handwriting fonts)
-- Insert images and photos (camera on iPad/iPhone)
-- Unlimited undo / redo; two-finger tap = undo, three-finger tap = redo
+**Writing (tuned for Apple Pencil)**
+- Smooth, pressure-sensitive ink: curve-fitted strokes, smoothed pressure, no redraw lag, saving never runs while the pen is down
+- Pen styles: fountain, ballpoint, dashed · highlighter (under the ink) · laser pointer
+- Palm rejection: once a Pencil is used, fingers only scroll and zoom (Auto / On / Off)
+- Notability-style eraser: **precise**, **whole stroke**, or **highlighter only** — and it jumps back to your pen after erasing
+- Stylus eraser end / eraser button supported
+- Draw & hold → perfect line, circle, ellipse, rectangle, triangle, polygon
+- Lasso: move, resize, **rotate**, recolour, bring to front/back, duplicate, copy/cut/paste, delete
+- Text boxes with **any Google Font** (1,700+ incl. Bangla), bold/italic/underline, alignment, your own .ttf/.otf
+- Images, photos, drag & drop, paste images/text from other apps; copy puts a PNG on the system clipboard
 
-**Pages & paper**
-- Continuous vertical scrolling pages with pinch zoom
-- Templates: blank, lined, narrow, grid, fine grid, dots, Cornell, music
-- Paper colours (white, cream, blue, green, dark) and sizes (Letter, A4, A5, 16:9, square)
-- Page panel: jump, reorder, duplicate, delete; new pages are added automatically as you write
-- **Import a PDF** to annotate (lecture slides, worksheets, forms)
+**Procreate-style gestures**
+| Gesture | Action |
+| --- | --- |
+| Two-finger tap / hold | Undo / rapid undo |
+| Three-finger tap | Redo |
+| Three-finger swipe down | Copy & paste menu |
+| Four-finger tap | Full screen |
+| Pinch / quick pinch in | Zoom / fit width |
+
+**Pages & templates**
+- Continuous pages, page thumbnails, add / reorder / duplicate / delete, auto-add page
+- 12 papers (lined, grid, dots, Cornell, music, isometric, storyboard, to-do…)
+- 24 detailed planner templates (Assignment Planner, Daily Goals, Daily Planner light/dark, Habit Tracker, Mind Map, Monthly/Weekly Planner, Finance, Travel, Flashcards, Lecture & Meeting notes…)
+- Customise accent colour, paper colour, heading, size & orientation
+- Import PDFs (annotate) and images as pages; export PDF, PNG, note file; print
 
 **Audio**
-- Record audio while you write; every stroke is time-stamped
-- Replay mode shows your notes appearing in sync with the recording; tap any handwriting to jump to that moment
-- Playback speed 0.75×–2×, ±10 s skip, multiple recordings per note
+- Record while writing; replay shows ink appearing in sync; tap handwriting to jump there
+- Live transcript where the browser supports speech recognition; insert transcript as text
 
-**Organise & share**
-- Subjects (colour-coded folders), search (titles and typed text), sort
-- Export as PDF, page as PNG, or a note file; native share sheet on iPad/iPhone
-- Full backup export / import to move notes between devices
-- Light and dark themes; installable PWA that works offline
+**Library & sync**
+- Notability-style home: quick actions, templates, recent notes; folders; search; Recently Deleted (30 days)
+- Free account → automatic background sync of notes, folders, images, PDFs and audio (last edit wins per note)
+- Fully offline: everything saves on the device first and syncs when you're back online
+- Backup export / import
 
 ## Install on iPad / iPhone
-
-1. Open the app in **Safari**.
-2. Tap **Share → Add to Home Screen**.
-3. Launch it from the home screen for a full-screen, offline app.
-
-On Android / Windows / Mac use Chrome or Edge's **Install** button.
-
-> Notes are stored in your browser (IndexedDB) on that device. Use **Settings → Export backup** regularly, and **Import backup** to move notes to another device.
+Open https://inknote.pages.dev in Safari → **Share → Add to Home Screen**. Rotation, split view and Stage Manager resize automatically.
 
 ## Run locally
-
-No build step and no dependencies — it's plain HTML, CSS and JavaScript modules.
-
 ```bash
-node dev-server.mjs
+npm install
+npm run db:local
+npm run dev
 ```
+Open http://localhost:8801.
 
-Then open http://localhost:8801. To try it on your iPad, open `http://<your-computer-ip>:8801` (note: the service worker and some APIs need HTTPS or localhost).
+## Deploy your own (Cloudflare Pages + D1)
+1. `npx wrangler d1 create inknote` and put the id in `wrangler.toml`
+2. `npm run db:remote`
+3. `npm run deploy`
 
-## Deploy your own
+Without the `functions/` API the app still works fully offline (no sync).
 
-Any static host works. The repo root is the site.
-
-- **Cloudflare:** `npx wrangler pages deploy . --project-name your-name` (or Workers static assets)
-- **GitHub Pages:** Settings → Pages → deploy from branch `main`, folder `/`
-- **Netlify / Vercel:** import the repo, no build command, output directory `.`
-
-## Project layout
-
+## Layout
 ```
-index.html            app shell
-styles.css            all styling (light/dark)
-sw.js                 offline cache (service worker)
-js/app.js             routing between library and editor
-js/library.js         subjects, note grid, search, settings, backup
-js/editor.js          canvas, Pencil/touch/mouse input, tools, undo, pages, audio
-js/ink.js             pressure-sensitive stroke geometry and hit-testing
-js/shapes.js          draw-and-hold shape recognition
-js/render.js          page rendering (shared by editor, thumbnails, export)
-js/templates.js       paper templates, colours and sizes
-js/notes.js           note model, PDF export/import, backup files
-js/pdf.js             PDF reader loader + tiny PDF writer
-js/db.js              IndexedDB storage
-vendor/pdfjs/         Mozilla pdf.js 3.11.174 (Apache-2.0)
+public/            the app (plain HTML/CSS/JS modules, no build step)
+  js/editor.js     canvas, input, tools, gestures, clipboard, audio
+  js/ink.js        stroke geometry & hit testing
+  js/templates.js  papers and planner templates
+  js/sync.js       offline-first sync engine
+  js/fonts.js      Google Fonts / custom fonts
+functions/api/     sync & account API (Pages Functions)
+schema.sql         D1 schema
 ```
-
-## Keyboard shortcuts (desktop / iPad keyboard)
-
-| Key | Action |
-| --- | --- |
-| P / H / E / L / T | Pen / Highlighter / Eraser / Lasso / Text |
-| Space + drag | Scroll |
-| Ctrl/⌘ + Z, Ctrl/⌘ + Shift + Z | Undo, redo |
-| Ctrl/⌘ + C / X / V / D | Copy, cut, paste, duplicate selection |
-| Delete | Delete selection |
-| Ctrl/⌘ + = / − / 0 | Zoom in, out, fit width |
-| Page Up / Page Down | Previous / next page |
-
-## Contributing
-
-Issues and pull requests are welcome. Please keep the app dependency-free and test on iPad Safari with an Apple Pencil when touching input code.
 
 ## License
-
-[MIT](LICENSE). Bundled pdf.js is © Mozilla Foundation, Apache License 2.0 (`vendor/pdfjs/LICENSE`).
+[MIT](LICENSE). Bundled pdf.js © Mozilla Foundation (Apache-2.0).

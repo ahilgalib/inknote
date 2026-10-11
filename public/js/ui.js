@@ -87,3 +87,44 @@ export function progressDialog(title) {
     close() { wrap.remove(); },
   };
 }
+
+// Big centred sheet (galleries, settings). Returns { el, close }.
+export function sheet(content, { className = '', onClose } = {}) {
+  closePopover();
+  const box = h('div', { class: 'sheet ' + className, role: 'dialog' }, content);
+  const wrap = h('div', { class: 'dialog-wrap sheet-wrap' }, box);
+  const close = () => { wrap.remove(); document.removeEventListener('keydown', esc); onClose && onClose(); };
+  const esc = (e) => { if (e.key === 'Escape') close(); };
+  wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) close(); });
+  document.addEventListener('keydown', esc);
+  document.body.append(wrap);
+  return { el: box, close };
+}
+
+export const PALETTE = [
+  '#1d1d1f', '#4a4a4f', '#8e8e93', '#c7c7cc', '#ffffff',
+  '#d93434', '#ff6b4a', '#ff9f0a', '#ffd60a', '#a3d977',
+  '#1f8a4c', '#30c48d', '#0e8a9a', '#5ac8fa', '#1f5bd8',
+  '#3f3fbf', '#8a3ffc', '#bf5af2', '#ff4f9a', '#a2845e',
+  '#7a3b2e', '#ffe24a', '#7ef29a', '#ff8fd0', '#7cc8ff',
+];
+
+// Colour picker: palette + any custom colour.
+export function colorPopover(anchor, current, onPick) {
+  const input = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(current) ? current : '#000000', class: 'color-native' });
+  input.addEventListener('input', () => onPick(input.value, false));
+  input.addEventListener('change', () => { onPick(input.value, true); closePopover(); });
+  const grid = h('div', { class: 'palette' }, PALETTE.map((c) => h('button', {
+    class: 'swatch' + (c.toLowerCase() === String(current).toLowerCase() ? ' on' : ''), style: { background: c }, 'aria-label': c,
+    onClick: () => { onPick(c, true); closePopover(); },
+  })));
+  return popover(anchor, h('div', { class: 'color-pop' }, grid, h('label', { class: 'btn block custom-color' }, input, 'Custom colour…')));
+}
+
+// Slider for exact sizes.
+export function sliderPopover(anchor, { label, min, max, step = 0.1, value, unit = '', onInput }) {
+  const out = h('span', { class: 'slider-val' }, value + unit);
+  const r = h('input', { type: 'range', min, max, step, value, class: 'slider' });
+  r.addEventListener('input', () => { out.textContent = (+r.value).toFixed(step < 1 ? 1 : 0) + unit; onInput(+r.value); });
+  return popover(anchor, h('div', { class: 'slider-pop' }, h('div', { class: 'row' }, h('b', {}, label), h('div', { class: 'grow' }), out), r));
+}

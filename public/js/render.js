@@ -3,16 +3,10 @@ import { drawPaper, isDarkPaper } from './templates.js';
 import { drawStroke, itemBBox } from './ink.js';
 import { assetURL } from './db.js';
 import { loadImage } from './util.js';
-
-export const FONTS = {
-  sans: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  serif: 'Georgia, "Times New Roman", serif',
-  mono: 'ui-monospace, Menlo, Consolas, monospace',
-  hand: '"Bradley Hand", "Segoe Print", "Comic Sans MS", cursive',
-};
+import { fontStack } from './fonts.js';
 
 export function fontFor(it) {
-  return `${it.size}px ${FONTS[it.font] || FONTS.sans}`;
+  return `${it.italic ? 'italic ' : ''}${it.bold ? 700 : 400} ${it.size}px ${fontStack(it.font)}`;
 }
 
 export function wrapText(ctx, text, maxW) {
@@ -26,7 +20,6 @@ export function wrapText(ctx, text, maxW) {
       if (ctx.measureText(test).width > maxW && line.trim()) {
         lines.push(line.trimEnd());
         line = w.trimStart();
-        // very long single word: hard break
         while (ctx.measureText(line).width > maxW && line.length > 1) {
           let i = line.length;
           while (i > 1 && ctx.measureText(line.slice(0, i)).width > maxW) i--;
@@ -44,21 +37,47 @@ let measureCtx;
 export function measureText(it) {
   measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
   measureCtx.font = fontFor(it);
-  const lines = wrapText(measureCtx, it.text, it.w);
-  return Math.max(1, lines.length) * it.size * 1.3;
+  return Math.max(1, wrapText(measureCtx, it.text, it.w).length) * it.size * 1.3;
+}
+
+function rotated(ctx, it, h, fn) {
+  if (!it.rot) return fn();
+  ctx.save();
+  const cx = it.x + it.w / 2, cy = it.y + h / 2;
+  ctx.translate(cx, cy); ctx.rotate(it.rot); ctx.translate(-cx, -cy);
+  fn();
+  ctx.restore();
 }
 
 export function drawText(ctx, it, alpha = 1) {
   ctx.save();
-  ctx.globalAlpha = alpha;
   ctx.font = fontFor(it);
-  ctx.fillStyle = it.color;
-  ctx.textBaseline = 'top';
   const lines = wrapText(ctx, it.text, it.w);
   const lh = it.size * 1.3;
-  lines.forEach((l, i) => ctx.fillText(l, it.x, it.y + i * lh + it.size * 0.12));
   it.h = Math.max(1, lines.length) * lh;
+  rotated(ctx, it, it.h, () => {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = it.color;
+    ctx.textBaseline = 'top';
+    const align = it.align || 'left';
+    ctx.textAlign = align;
+    const x = align === 'center' ? it.x + it.w / 2 : align === 'right' ? it.x + it.w : it.x;
+    lines.forEach((l, i) => {
+      ctx.fillText(l, x, it.y + i * lh + it.size * 0.12);
+      if (it.underline && l) {
+        const w = ctx.measureText(l).width, x0 = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
+        ctx.fillRect(x0, it.y + i * lh + it.size * 1.12, w, Math.max(1, it.size / 16));
+      }
+    });
+  });
   ctx.restore();
+}
+
+export function drawImageItem(ctx, it, img) {
+  rotated(ctx, it, it.h, () => {
+    if (img) ctx.drawImage(img, it.x, it.y, it.w, it.h);
+    else { ctx.fillStyle = 'rgba(128,128,128,0.15)'; ctx.fillRect(it.x, it.y, it.w, it.h); }
+  });
 }
 
 function intersects(b, c) {
@@ -70,21 +89,16 @@ function intersects(b, c) {
 export function drawPage(ctx, page, opts = {}) {
   const { images = new Map(), hidden, alpha, cull } = opts;
   const bg = page.bg ? images.get(page.bg) : null;
-  drawPaper(ctx, page, bg && bg.complete !== false ? bg : null);
-  if (page.bg && !bg) {
-    // PDF page not decoded yet: faint placeholder
-    ctx.fillStyle = 'rgba(0,0,0,0.03)';
-    ctx.fillRect(0, 0, page.w, page.h);
-  }
+  drawPaper(ctx, page, bg || null);
+  if (page.bg && !bg) { ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fillRect(0, 0, page.w, page.h); }
+  drawItems(ctx, page, page.items, { images, hidden, alpha, cull });
+}
+
+export function drawItems(ctx, page, items, { images = new Map(), hidden, alpha, cull } = {}) {
   ctx.__dark = isDarkPaper(page.color) && !page.bg;
-  const items = page.items;
   const vis = (it) => !(hidden && hidden.has(it.id)) && intersects(itemBBox(it), cull);
   // images below ink, highlighter below pen, text on top
-  for (const it of items) if (it.type === 'image' && vis(it)) {
-    const img = images.get(it.asset);
-    if (img) ctx.drawImage(img, it.x, it.y, it.w, it.h);
-    else { ctx.fillStyle = 'rgba(128,128,128,0.15)'; ctx.fillRect(it.x, it.y, it.w, it.h); }
-  }
+  for (const it of items) if (it.type === 'image' && vis(it)) drawImageItem(ctx, it, images.get(it.asset));
   for (const it of items) if (it.type === 'stroke' && it.tool === 'hl' && vis(it)) drawStroke(ctx, it, alpha ? alpha(it) : 1);
   for (const it of items) if (it.type === 'stroke' && it.tool !== 'hl' && vis(it)) drawStroke(ctx, it, alpha ? alpha(it) : 1);
   for (const it of items) if (it.type === 'text' && vis(it)) drawText(ctx, it, alpha ? alpha(it) : 1);

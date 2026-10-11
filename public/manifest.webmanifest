@@ -1,13 +1,13 @@
 {
-  "name": "Inkwell Notes",
-  "short_name": "Inkwell",
-  "description": "Free, open-source handwritten notes for iPad + Apple Pencil, phones and desktop.",
+  "name": "Inknote",
+  "short_name": "Inknote",
+  "description": "Free, open-source handwritten notes for iPad + Apple Pencil, phones and desktop. Works offline, syncs everywhere.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f6f5f2",
-  "theme_color": "#f6f5f2",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
   "categories": ["productivity", "education"],
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
