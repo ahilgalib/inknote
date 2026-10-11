@@ -108,6 +108,17 @@ const queueRoute = () => { routing = routing.then(route, route); };
 window.addEventListener('hashchange', queueRoute);
 queueRoute();
 
+// A new version was deployed: the service worker swaps itself in; offer a
+// one-tap reload (automatic on the home screen) so nobody stays on old code.
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    if (!editors.length) { location.reload(); return; }
+    if (document.querySelector('.update-bar')) return;
+    const bar = h('div', { class: 'update-bar' }, h('span', {}, 'A new version of Inknote is ready'),
+      h('button', { class: 'btn primary', onClick: async () => { await Promise.all(editors.map((e) => e.flushSave())); location.reload(); } }, 'Update now'));
+    document.body.append(bar);
+  });
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').then((r) => r.update()).catch(() => {}); });
 }

@@ -15,6 +15,7 @@ import { account, onStatus, signIn, signUp, signOut, updateName, deleteAccount, 
 
 const FOLDER_COLORS = ['#e5484d', '#f76b15', '#f5b400', '#30a46c', '#0090ff', '#6e56cf', '#d6409f', '#7c8088'];
 const REPO = 'https://github.com/ahilgalib/inknote';
+export const APP_VERSION = '2026.10.11 (7)';
 const QUOTES = [
   ['It always seems impossible until it\'s done.', 'Nelson Mandela'],
   ['The expert in anything was once a beginner.', 'Helen Hayes'],
@@ -647,6 +648,7 @@ export class Library {
   set_help() {
     return h('div', { class: 'set-body' },
       h('p', {}, 'Inknote is free and open source.'),
+      h('p', { class: 'muted small' }, 'Version ' + APP_VERSION),
       h('table', { class: 'help-table' }, [
         ['Two-finger tap', 'Undo'], ['Two-finger hold', 'Rapid undo'], ['Three-finger tap', 'Redo'], ['Three-finger swipe down', 'Copy & paste menu'],
         ['Four-finger tap', 'Full screen'], ['Quick pinch in', 'Fit page'], ['Draw & hold', 'Perfect shape'], ['Tap a tool again', 'More options'],
