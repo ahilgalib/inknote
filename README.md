@@ -16,9 +16,12 @@ Works offline, installs to your home screen, and syncs automatically across all 
 - Notability-style eraser: **precise**, **whole stroke**, or **highlighter only** — and it jumps back to your pen after erasing
 - Stylus eraser end / eraser button supported
 - Draw & hold → perfect line, circle, ellipse, rectangle, triangle, polygon
-- Lasso: move, resize, **rotate**, recolour, bring to front/back, duplicate, copy/cut/paste, delete
-- Text boxes with **any Google Font** (1,700+ incl. Bangla), bold/italic/underline, alignment, your own .ttf/.otf
-- Images, photos, drag & drop, paste images/text from other apps; copy puts a PNG on the system clipboard
+- Lasso: move, resize from any corner, **rotate**, recolour, bring to front/back, duplicate, copy/cut/paste, delete — the selection lifts off the page and follows your finger smoothly, and can be dropped onto another page
+- **Dark / light pages** in one tap: black ink shows white on dark paper and white ink shows black on light paper; other colours never change
+- Text boxes with **any Google Font** (1,700+ incl. Bangla), bold/italic/underline, alignment, your own .ttf/.otf — drag a text box (text tool or the grip while typing) to move it, drag its edge to change the width
+- Pictures: tap one to get its options — **sticker** (die-cut white border + shadow), crop, rotate, flip, copy, duplicate, front/back, delete; drag to move, corners to resize
+- Insert menu: photo, camera, audio file, recording, text, paste, PDF; drag & drop works too
+- Paste from other apps (Notability, Photos, browsers): pictures, PDF selections, audio files, rich text with images, plain text; copy puts a PNG on the system clipboard
 
 **Procreate-style gestures**
 | Gesture | Action |
@@ -39,11 +42,13 @@ Works offline, installs to your home screen, and syncs automatically across all 
 **Audio**
 - Record while writing; replay shows ink appearing in sync; tap handwriting to jump there
 - Live transcript where the browser supports speech recognition; insert transcript as text
+- Audio clips on the page: add audio files (or place a recording) as a clip you tap to play; move and copy them like anything else
 
 **Library & sync**
 - Notability-style home: quick actions, templates, recent notes; folders; search; Recently Deleted (30 days)
-- Free account → automatic background sync of notes, folders, images, PDFs and audio (last edit wins per note)
-- Fully offline: everything saves on the device first and syncs when you're back online
+- Free account → automatic background sync of notes, folders, images, PDFs and audio
+- Fully offline: everything saves on the device first and syncs when you're back online; if the same note was edited on two devices, both sets of changes are merged (nothing written offline is lost)
+- Sync status in the editor: Offline · Syncing · Synced
 - Backup export / import
 
 ## Install on iPad / iPhone
@@ -61,6 +66,8 @@ Open http://localhost:8801.
 1. `npx wrangler d1 create inknote` and put the id in `wrangler.toml`
 2. `npm run db:remote`
 3. `npm run deploy`
+
+Or let GitHub deploy for you: add the repository secrets `CLOUDFLARE_API_TOKEN` (a token with *Account → Cloudflare Pages → Edit*) and `CLOUDFLARE_ACCOUNT_ID`; every push to `main` then deploys automatically (`.github/workflows/deploy.yml`).
 
 Without the `functions/` API the app still works fully offline (no sync).
 

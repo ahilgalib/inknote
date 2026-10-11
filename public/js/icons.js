@@ -3,6 +3,15 @@ const s = (d, extra = '') =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${d}</svg>`;
 
 export const icons = {
+  sun: s('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+  moon: s('<path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/>'),
+  sticker: s('<path d="M14 21H7a4 4 0 01-4-4V7a4 4 0 014-4h10a4 4 0 014 4v7z"/><path d="M14 21v-3a4 4 0 014-4h3"/>'),
+  crop: s('<path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>'),
+  flip: s('<path d="M12 3v18"/><path d="M8 7L3 17h5zM16 7l5 10h-5z"/>'),
+  camera: s('<path d="M3 8a2 2 0 012-2h2.5l1.5-2h6l1.5 2H19a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/>'),
+  audio: s('<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>'),
+  insert: s('<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>'),
+  move: s('<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>'),
   back: s('<path d="M15 5l-7 7 7 7"/>'),
   plus: s('<path d="M12 5v14M5 12h14"/>'),
   pen: s('<path d="M4 20l1.2-4.6L16.5 4.1a2 2 0 012.8 0l.6.6a2 2 0 010 2.8L8.6 18.8z"/><path d="M14.5 6.1l3.4 3.4"/>'),

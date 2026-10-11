@@ -1,14 +1,22 @@
 // Cloud sync. Local-first: every change is saved to IndexedDB immediately and
-// works offline. When signed in and online, changes are pushed and pulled in
-// the background (last edit wins per note). Assets (images, PDF pages, audio)
-// are uploaded once and downloaded on demand.
+// works offline. When signed in and online, changes are pulled and pushed in
+// the background. If a note was edited on two devices (e.g. one was offline),
+// the two versions are merged item by item instead of one replacing the
+// other. Assets (images, PDF pages, audio) are uploaded once and downloaded
+// on demand.
 import { db, putAsset, noteAssetIds, setRemoteAssetFetcher } from './db.js';
+import { bodyIds, mergeBodies } from './notes.js';
 
 const KEY = 'inknote.account';
 const API = '/api';
 
 let acct = load();
 let running = null;
+let beforeSync = null;
+export function setBeforeSync(fn) { beforeSync = fn; }
+
+async function getBase(id) { try { const b = await db.get('bases', id); return b ? new Set(b.ids) : null; } catch { return null; } }
+async function setBase(id, ids) { try { await db.put('bases', { id, ids: [...ids] }); } catch {} }
 let timer = 0;
 let status = { state: 'idle', last: acct ? acct.last || 0 : 0, error: '' };
 const listeners = new Set();
@@ -107,7 +115,15 @@ export function syncNow() {
   r.p = (async () => {
     setStatus({ state: 'syncing', error: '' });
     try {
-      do { r.again = false; await push(); await pull(); } while (r.again);
+      if (beforeSync) { try { await beforeSync(); } catch {} }
+      // pull first: remote edits get merged into local ones before we push
+      let rounds = 0;
+      do {
+        r.again = false;
+        await pull();
+        // a refused write means another device changed the note meanwhile: pull & merge again
+        if ((await push()) && rounds < 3) r.again = true;
+      } while (r.again && ++rounds < 6);
       acct && (acct.last = Date.now(), save());
       setStatus({ state: 'synced', last: Date.now() });
       prefetchAssets();
@@ -129,10 +145,12 @@ async function push() {
   const items = [];
   const notes = await db.all('notes');
   const dirty = notes.filter((n) => n.updated !== n.syncedUpdated);
+  const pushedBodies = new Map();
   for (const n of dirty) {
     const bodyKey = `b_${n.id}_${n.bodyRev || n.updated}`;
     if (n.syncedBodyRev !== (n.bodyRev || n.updated)) {
       const body = await db.get('bodies', n.id);
+      if (body) pushedBodies.set(n.id, body);
       if (!body) continue;
       // upload any assets the server doesn't have yet
       const keys = [...noteAssetIds(body)].map((id) => 'a_' + id);
@@ -146,14 +164,17 @@ async function push() {
       const { missing } = await apiJSON('/blobs/missing', { method: 'POST', body: { keys: [bodyKey] } });
       if (missing.length) await api('/blob/' + bodyKey, { method: 'PUT', body: await gzip(JSON.stringify(body)), raw: true, headers: { 'content-type': 'application/octet-stream' } });
     }
-    items.push({ kind: 'note', id: n.id, updated: n.updated, deleted: 0, data: serverMeta(n), body_key: bodyKey, _n: n });
+    // base: the server version this edit is based on (the server refuses the
+    // write if another device changed the note meanwhile; we merge next round)
+    items.push({ kind: 'note', id: n.id, updated: n.updated, deleted: 0, data: serverMeta(n), body_key: bodyKey, base: n.syncedUpdated, _n: n });
   }
   for (const s of await db.all('subjects')) {
     if ((s.updated || 1) !== s.syncedUpdated) items.push({ kind: 'subject', id: s.id, updated: s.updated || 1, deleted: 0, data: { name: s.name, color: s.color, order: s.order }, _s: s });
   }
   const tombs = await db.all('tombstones');
   for (const t of tombs) items.push({ kind: t.kind, id: t.itemId, updated: t.updated, deleted: 1, _t: t });
-  if (!items.length) return;
+  if (!items.length) return 0;
+  let refused = 0;
   for (let i = 0; i < items.length; i += 50) {
     const batch = items.slice(i, i + 50);
     const res = await apiJSON('/items', { method: 'POST', body: { items: batch.map(({ _n, _s, _t, ...x }) => x) } });
@@ -161,16 +182,18 @@ async function push() {
     for (const it of batch) {
       const key = it.kind + ':' + it.id;
       if (it._t) { await db.del('tombstones', it._t.id); continue; }
-      if (!ok.has(key)) continue;
+      if (!ok.has(key)) { if (it._n) refused++; continue; }
       if (it._n) {
         const cur = await db.get('notes', it.id);
         if (cur && cur.updated === it.updated) { cur.syncedUpdated = it.updated; cur.syncedBodyRev = cur.bodyRev || cur.updated; await db.put('notes', cur); }
+        if (pushedBodies.has(it.id)) await setBase(it.id, bodyIds(pushedBodies.get(it.id)));
       } else if (it._s) {
         const cur = await db.get('subjects', it.id);
         if (cur && (cur.updated || 1) === it.updated) { cur.syncedUpdated = it.updated; await db.put('subjects', cur); }
       }
     }
   }
+  return refused;
 }
 
 async function pull() {
@@ -191,16 +214,44 @@ async function pull() {
           if (local && !(localDirty && local.updated > it.updated)) { await db.del('notes', it.id); await db.del('bodies', it.id); changed = true; notifyNote(it.id, true); }
           continue;
         }
-        if (local && local.updated >= it.updated) continue;
-        if (localDirty && local.updated > it.updated) continue;
+        if (local) {
+          // our own write coming back, or nothing new
+          if (it.updated === local.updated || it.updated === local.syncedUpdated) continue;
+          if (!localDirty && local.updated > it.updated) continue;
+        }
         const bodyRev = it.data.bodyRev || it.updated;
-        const meta = { ...it.data, id: it.id, updated: it.updated, syncedUpdated: it.updated, syncedBodyRev: bodyRev, bodyRev };
+        let remoteBody = null;
         if (!local || (local.bodyRev || local.updated) !== bodyRev || !(await db.get('bodies', it.id))) {
           const buf = await (await api('/blob/' + it.body_key)).arrayBuffer();
-          const body = JSON.parse(await gunzipText(buf));
-          body.id = it.id;
-          await db.put('bodies', body);
+          remoteBody = JSON.parse(await gunzipText(buf));
+          remoteBody.id = it.id;
         }
+        if (localDirty) {
+          // edited here (maybe offline) and on another device: merge both
+          const localBody = await db.get('bodies', it.id);
+          const now = Date.now();
+          const remoteNewer = it.updated > local.updated;
+          const meta = remoteNewer ? { ...it.data, id: it.id, opened: local.opened, thumb: local.thumb || it.data.thumb } : { ...local };
+          meta.syncedUpdated = it.updated;
+          meta.syncedBodyRev = bodyRev;
+          meta.updated = now;
+          if (remoteBody && localBody && local.syncedBodyRev !== bodyRev) {
+            const merged = mergeBodies(localBody, remoteBody, await getBase(it.id), !remoteNewer);
+            await db.put('bodies', merged);
+            meta.bodyRev = now;
+            meta.pageCount = merged.pages.length;
+          } else if (remoteBody && !localBody) {
+            await db.put('bodies', remoteBody);
+            meta.bodyRev = bodyRev;
+          } else meta.bodyRev = local.bodyRev || local.updated;
+          if (remoteBody) await setBase(it.id, bodyIds(remoteBody));
+          await db.put('notes', meta);
+          changed = true;
+          notifyNote(it.id, false);
+          continue;
+        }
+        const meta = { ...it.data, id: it.id, updated: it.updated, syncedUpdated: it.updated, syncedBodyRev: bodyRev, bodyRev };
+        if (remoteBody) { await db.put('bodies', remoteBody); await setBase(it.id, bodyIds(remoteBody)); }
         if (local && local.opened) meta.opened = local.opened;
         await db.put('notes', meta);
         changed = true;

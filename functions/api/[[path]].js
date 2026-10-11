@@ -141,6 +141,9 @@ export async function onRequest({ request: req, env, params }) {
         const updated = Number(it.updated) || 0;
         const cur = await env.DB.prepare('SELECT updated, body_key FROM items WHERE user_id = ? AND kind = ? AND id = ?').bind(user.id, it.kind, it.id).first();
         if (cur && cur.updated > updated) continue; // server copy is newer
+        // the client edited an older version than the server has (another device
+        // wrote meanwhile): refuse, the client pulls, merges and pushes again
+        if (cur && it.kind === 'note' && !it.deleted && it.base != null && Number(it.base) !== cur.updated && cur.updated !== updated) continue;
         const data = it.deleted ? null : JSON.stringify(it.data || {}).slice(0, 400000);
         const bodyKey = it.deleted ? null : (it.kind === 'note' && validKey(it.body_key || '') ? it.body_key : null);
         const seq = await nextSeq(env, user.id);
