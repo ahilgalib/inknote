@@ -73,7 +73,8 @@ export function mergeBodies(local, remote, base, preferLocal) {
 
 export function defaultTitle() {
   const d = new Date();
-  return 'Note ' + d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  // Notability style: "Note 8 Oct, 2026"
+  return `Note ${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3)}, ${d.getFullYear()}`;
 }
 
 export async function createNote({ title, subjectId = null, pages } = {}) {

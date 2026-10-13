@@ -29,9 +29,10 @@ const DRAW_TOOLS = ['pen', 'hl', 'laser', 'tape'];
 let clipboard = null;    // { id, items } shared between notes (and between split panes)
 let activeEditor = null; // with two notes side by side, keys / paste go to the one last touched
 
+// 'pencil' is the pen tool with the pencil style, given its own button like Notability
 const TOOLS = [
-  ['pen', 'Pen', 'P', 'pen'], ['hl', 'Highlighter', 'H', 'highlighter'], ['eraser', 'Eraser', 'E', 'eraser'],
-  ['lasso', 'Lasso', 'L', 'lasso'], ['text', 'Text', 'T', 'text'], ['hand', 'Scroll', 'Space', 'hand'],
+  ['pen', 'Pen', 'P', 'nPen'], ['pencil', 'Pencil', '', 'nPencil'], ['hl', 'Highlighter', 'H', 'nHighlighter'],
+  ['eraser', 'Eraser', 'E', 'nEraser'], ['text', 'Text', 'T', 'nText'], ['lasso', 'Lasso', 'L', 'nSelect'],
 ];
 
 export class Editor {
@@ -77,47 +78,59 @@ export class Editor {
     this.titleInput.addEventListener('input', () => { this.meta.title = this.titleInput.value || 'Untitled note'; this.changed(); });
     this.titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.titleInput.blur(); });
 
-    this.recBtn = btn('mic', 'Record audio', () => this.toggleRecord(), 'rec-btn');
-    this.recTime = h('span', { class: 'rec-time' });
-    this.recBtn.append(this.recTime);
-
-    const topbar = h('header', { class: 'ed-top' },
-      btn('back', 'Back to library', () => this.exit()),
-      btn('pages', 'Page thumbnails', () => this.togglePagesPanel()),
-      this.titleInput,
-      h('div', { class: 'grow' }),
-      this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
-      this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'),
-      this.findAnchor = btn('search', 'Find in note (Ctrl+F)', () => this.findPanel(), 'hide-phone'),
-      this.timerBtn = h('button', { class: 'icon-btn timer-btn hide-phone', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
-      this.recBtn,
-      this.themeBtn = btn('moon', 'Dark / light pages', () => this.toggleDarkMode(), 'hide-phone'),
-      btn('template', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
-      btn('share', 'Share & export', (e) => this.exportMenu(e.currentTarget)),
-      btn('expand', 'Full screen (4-finger tap)', () => this.toggleFocus(), 'hide-phone'),
-      btn('more', 'More', (e) => this.moreMenu(e.currentTarget)));
+    // Notability-style header: three floating islands (back · tools · actions),
+    // then the note title in large type underneath.
+    const island = (cls, ...kids) => h('div', { class: 'tb-island ' + cls }, ...kids);
+    const tbtn = (icon, title, onClick, cls = '') => h('button', { class: 'tool-btn ' + cls, title, 'aria-label': title, onClick, html: icons[icon] });
+    const sep = () => h('div', { class: 'tb-sep' });
 
     this.toolBtns = {};
-    const tools = h('div', { class: 'tb-group tools' }, TOOLS.map(([id, label, key, icon]) => {
-      const b = h('button', { class: 'tool-btn', title: `${label} (${key})`, 'aria-label': label, onClick: () => this.toolTap(id), html: icons[icon] });
-      this.toolBtns[id] = b;
-      return b;
-    }),
-    this.toolboxBtn = h('button', { class: 'tool-btn', title: 'Toolbox: zoom, tape, ruler, laser, stickers…', 'aria-label': 'Toolbox', onClick: (e) => this.toolboxMenu(e.currentTarget), html: icons.toolbox }),
-    h('button', { class: 'tool-btn', title: 'Insert photo, camera, audio, PDF…', 'aria-label': 'Insert', onClick: (e) => this.insertMenu(e.currentTarget), html: icons.image }));
-    this.presetsEl = h('div', { class: 'tb-group presets' });
+    const toolBtn = ([id, label, key, icon]) => (this.toolBtns[id] = tbtn(icon, key ? `${label} (${key})` : label, () => this.toolTap(id)));
+    const recBtn = () => tbtn('nMic', 'Record audio', () => this.toggleRecord(), 'rec-btn');
+    this.tbPage = 1;
+    const page = (n) => () => { this.tbPage = n; this.toolsIsland.dataset.page = n; };
+    this.fingerBtns = [];
+    const fingerBtn = () => { const b = tbtn('nFinger', 'Draw with finger', () => this.setFinger(fingerDraws() ? 'off' : 'on'), 'finger-btn'); this.fingerBtns.push(b); return b; };
+    this.zoomBtn = tbtn('nZoom', 'Zoom window: write big, it lands small', () => { this.toggleZoom(); this.renderToolbar(); });
+    this.rulerBtn = tbtn('nRuler', 'Ruler', () => { this.toggleRuler(); this.renderToolbar(); });
+    this.toolboxBtn = tbtn('nGear', 'Toolbox: stickers, find, eyedropper, timer…', (e) => this.toolboxMenu(e.currentTarget));
+    this.toolsIsland = island('tools',
+      h('div', { class: 'tb-page p1' }, TOOLS.map(toolBtn),
+        tbtn('nInsert', 'Insert photo, camera, audio, PDF…', (e) => this.insertMenu(e.currentTarget)),
+        recBtn(), sep(), fingerBtn(),
+        tbtn('nRight', 'More tools', page(2), 'chev')),
+      h('div', { class: 'tb-page p2' }, fingerBtn(), this.zoomBtn,
+        toolBtn(['laser', 'Laser pointer', 'K', 'nLaser']), toolBtn(['tape', 'Tape', 'Y', 'nTape']), this.rulerBtn,
+        recBtn(), tbtn('nComment', 'Sticky note', () => this.addSticky()), this.toolboxBtn,
+        tbtn('nLeft', 'Back to writing tools', page(1), 'chev')));
+    this.toolsIsland.dataset.page = 1;
 
-    this.undoBtn = btn('undo', 'Undo (2-finger tap)', () => this.undo());
-    this.redoBtn = btn('redo', 'Redo (3-finger tap)', () => this.redo());
-    // phones: undo / redo live in the top bar so all tools fit on one row
-    this.undoBtnTop = btn('undo', 'Undo', () => this.undo(), 'phone-only');
-    this.redoBtnTop = btn('redo', 'Redo', () => this.redo(), 'phone-only');
-    topbar.insertBefore(this.redoBtnTop, this.syncPill);
-    topbar.insertBefore(this.undoBtnTop, this.redoBtnTop);
+    this.undoBtn = tbtn('nUndo', 'Undo (2-finger tap)', () => this.undo());
+    this.redoBtn = tbtn('nRedo', 'Redo (3-finger tap)', () => this.redo());
+    this.moreBtn = tbtn('nMore', 'More', (e) => this.moreMenu(e.currentTarget), 'more-btn');
+    this.findAnchor = this.moreBtn;
+    const topbar = h('header', { class: 'ed-top' },
+      island('back', tbtn('nBack', 'Back to library', () => this.exit())),
+      this.toolsIsland,
+      island('actions', this.undoBtn, this.redoBtn,
+        tbtn('nShare', 'Share & export', (e) => this.exportMenu(e.currentTarget)),
+        this.moreBtn,
+        tbtn('nPaper', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
+        tbtn('nPages', 'Page thumbnails', () => this.togglePagesPanel())));
+
+    this.titleInput = h('input', { class: 'title-input', value: this.meta.title, spellcheck: 'false', 'aria-label': 'Note title' });
+    this.titleInput.addEventListener('input', () => { this.meta.title = this.titleInput.value || 'Untitled note'; this.changed(); });
+    this.titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.titleInput.blur(); });
+    this.recTime = h('button', { class: 'rec-time', title: 'Stop recording', onClick: () => this.toggleRecord() });
+    const titlebar = h('div', { class: 'ed-title' },
+      this.titleInput,
+      this.recTime,
+      this.timerBtn = h('button', { class: 'icon-btn timer-btn', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
+      this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
+      this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'));
+
+    this.presetsEl = h('div', { class: 'tb-group presets' });
     this.optsEl = h('div', { class: 'tb-group opts' });
-    const toolbar = h('div', { class: 'ed-toolbar' },
-      h('div', { class: 'tb-group tb-first hide-phone' }, this.undoBtn, this.redoBtn),
-      h('div', { class: 'tb-sep hide-phone' }), tools);
     // Notability-style floating style tray: favourites, colours, sizes, options
     this.tray = h('div', { class: 'style-tray' }, this.presetsEl, this.optsEl);
 
@@ -154,7 +167,7 @@ export class Editor {
     this.audioBar = h('div', { class: 'audio-bar', hidden: true });
     this.pagesPanel = h('aside', { class: 'pages-panel', hidden: true });
 
-    this.el = h('div', { class: 'editor' }, topbar, toolbar,
+    this.el = h('div', { class: 'editor' }, topbar, titlebar,
       h('div', { class: 'ed-body' }, this.pagesPanel, this.stage, this.tray), this.audioBar);
 
     const cv = this.liveCv;
@@ -375,7 +388,6 @@ export class Editor {
     const dk = this.curDark();
     if (dk !== this.lastDark) {
       this.lastDark = dk;
-      this.themeBtn.innerHTML = icons[dk ? 'sun' : 'moon'];
       this.renderToolbar();
     }
   }
@@ -2166,8 +2178,8 @@ export class Editor {
   }
 
   updateUndo() {
-    this.undoBtn.disabled = this.undoBtnTop.disabled = !this.undoStack.length;
-    this.redoBtn.disabled = this.redoBtnTop.disabled = !this.redoStack.length;
+    this.undoBtn.disabled = !this.undoStack.length;
+    this.redoBtn.disabled = !this.redoStack.length;
   }
 
   // ---- pages ----
@@ -2411,7 +2423,7 @@ export class Editor {
       { label: 'Go to page…', icon: 'pages', onClick: () => this.goToPage() },
       { label: 'Find in note', icon: 'search', onClick: () => this.findPanel() },
       this.inSplit() ? { label: 'Close this side', icon: 'close', onClick: () => this.exit() } : { label: 'Open another note side by side…', icon: 'pages', onClick: () => this.splitMenu(anchor) },
-      { label: 'Study timer…', icon: 'timer', onClick: () => this.timerMenu(this.timerBtn) },
+      { label: 'Study timer…', icon: 'timer', onClick: () => this.timerMenu(anchor) },
       { label: this.meta.locked ? 'Unlock note' : 'Lock note (read only)', icon: this.meta.locked ? 'unlock' : 'lock', onClick: () => this.toggleLock() },
       '-',
       { label: 'Delete this page', icon: 'trash', danger: true, onClick: () => this.deletePage() },
@@ -2449,6 +2461,7 @@ export class Editor {
   setFinger(v) {
     settings.fingerDraw = v;
     saveSettings();
+    this.renderToolbar();
     toast(fingerDraws() ? 'Fingers draw · two fingers scroll' : 'Fingers scroll · Pencil draws');
   }
 
@@ -2508,15 +2521,28 @@ export class Editor {
   // First tap selects a tool and opens its style tray; tapping the active
   // tool again opens / closes the tray (like Notability).
   toolTap(t) {
-    if (this.tool === t) { this.trayOpen = !this.trayOpen; this.syncTray(); return; }
+    if (this.toolButtonId() === t) { this.trayOpen = !this.trayOpen; this.syncTray(); return; }
     this.trayOpen = true;
+    if (t === 'pen' || t === 'pencil') {
+      // Pen and Pencil are one tool; the button picks the style
+      const cfg = this.toolCfg('pen');
+      if (t === 'pencil') { if (cfg.style !== 'pencil') cfg.penStyle = cfg.style; cfg.style = 'pencil'; }
+      else if (cfg.style === 'pencil') cfg.style = cfg.penStyle && cfg.penStyle !== 'pencil' ? cfg.penStyle : 'fountain';
+      saveSettings();
+      if (this.tool === 'pen') { this.renderToolbar(); return; }
+      t = 'pen';
+    }
     this.setTool(t);
   }
+
+  // which toolbar button shows as selected
+  toolButtonId() { return this.tool === 'pen' && this.toolCfg('pen').style === 'pencil' ? 'pencil' : this.tool; }
 
   syncTray() {
     const empty = this.tool === 'hand';
     this.tray.hidden = !this.trayOpen || empty;
-    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('tray-open', id === this.tool && !this.tray.hidden);
+    const cur = this.toolButtonId();
+    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('tray-open', id === cur && !this.tray.hidden);
   }
 
   smallScreen() { return (this.vw || innerWidth) < 700; }
@@ -2533,7 +2559,7 @@ export class Editor {
 
   // second tap on a tool: its detailed options
   toolOptions(t) {
-    const anchor = this.toolBtns[t];
+    const anchor = this.toolBtns[t === 'pen' ? this.toolButtonId() : t];
     if (t === 'pen') {
       const cfg = this.toolCfg('pen');
       popover(anchor, h('div', { class: 'opt-pop' }, h('h4', {}, 'Pen style'),
@@ -2551,8 +2577,15 @@ export class Editor {
   }
 
   renderToolbar() {
-    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('on', id === this.tool);
-    this.toolboxBtn.classList.toggle('on', this.tool === 'tape' || this.tool === 'laser' || !!this.zoom || !!this.ruler);
+    const cur = this.toolButtonId();
+    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('on', id === cur);
+    this.zoomBtn.classList.toggle('on', !!this.zoom);
+    this.rulerBtn.classList.toggle('on', !!this.ruler);
+    for (const b of this.fingerBtns) b.classList.toggle('on', fingerDraws());
+    // keep the page of the tools bar that holds the active tool in view
+    const pg = this.tool === 'laser' || this.tool === 'tape' ? 2 : this.tool === 'hand' ? this.tbPage : 1;
+    if (pg !== this.tbPage && this.lastToolShown !== this.tool) { this.tbPage = pg; this.toolsIsland.dataset.page = pg; }
+    this.lastToolShown = this.tool;
     this.renderPresets(this.presetsEl);
     this.syncTray();
     const O = this.optsEl;
@@ -2669,7 +2702,7 @@ export class Editor {
     mr.start(1000);
     this.rec = { id: uid(), start: performance.now(), mr, stream, chunks, mime, transcript: [] };
     this.startTranscript();
-    this.recBtn.classList.add('recording');
+    this.el.classList.add('recording');
     this.recTimer = setInterval(() => { this.recTime.textContent = fmtTime((performance.now() - this.rec.start) / 1000); }, 250);
     this.recTime.textContent = '0:00';
     toast('Recording — your writing is synced to the audio');
@@ -2702,7 +2735,7 @@ export class Editor {
     this.rec = null;
     clearInterval(this.recTimer);
     if (r.sr) { try { r.sr.onend = null; r.sr.stop(); } catch {} }
-    this.recBtn.classList.remove('recording');
+    this.el.classList.remove('recording');
     this.recTime.textContent = '';
     await new Promise((res) => { r.mr.onstop = res; try { r.mr.stop(); } catch { res(); } });
     r.stream.getTracks().forEach((t) => t.stop());
@@ -2903,6 +2936,7 @@ export class Editor {
       : st.state === 'synced' ? ['cloud', 'Synced', 'ok']
       : st.state === 'error' ? ['cloudOff', 'Sync paused · saved on this device', 'off'] : null;
     P.hidden = !view;
+    if (this.moreBtn) { if (view) this.moreBtn.dataset.sync = view[2]; else delete this.moreBtn.dataset.sync; }
     if (!view) return;
     P.className = 'sync-pill ' + view[2];
     P.title = view[1];
