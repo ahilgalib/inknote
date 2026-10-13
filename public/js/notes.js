@@ -163,7 +163,7 @@ export async function duplicateNote(meta) {
 
 // ---- PDF -------------------------------------------------------------------
 
-export async function exportNotePDF(meta, body, onProgress) {
+export async function exportNotePDF(meta, body, onProgress, { returnBlob = false } = {}) {
   const pages = [];
   for (let i = 0; i < body.pages.length; i++) {
     const p = body.pages[i];
@@ -174,7 +174,9 @@ export async function exportNotePDF(meta, body, onProgress) {
     c.width = c.height = 0;
     onProgress && onProgress((i + 1) / body.pages.length);
   }
-  await saveFile(buildPDF(pages), safeName(meta.title) + '.pdf');
+  const pdf = buildPDF(pages);
+  if (returnBlob) return pdf;
+  await saveFile(pdf, safeName(meta.title) + '.pdf');
 }
 
 export async function pdfToPages(file, onProgress) {

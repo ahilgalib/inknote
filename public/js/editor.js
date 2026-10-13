@@ -27,7 +27,9 @@ const DARK_PAPER = '#141416';
 const PEN_STYLES = [['fountain', 'Fountain'], ['ball', 'Ballpoint'], ['calli', 'Calligraphy'], ['pencil', 'Pencil'], ['dash', 'Dashed'], ['dot', 'Dotted']];
 const DRAW_TOOLS = ['pen', 'hl', 'laser', 'tape'];
 let clipboard = null;    // { id, items } shared between notes (and between split panes)
-let activeEditor = null; // with two notes side by side, keys / paste go to the one last touched
+let activeEditor = null;
+// "9 Oct, 2026 • 11:35 am"
+const fmtSynced = (t) => { const d = new Date(t); return `${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3)}, ${d.getFullYear()} • ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase()}`; }; // with two notes side by side, keys / paste go to the one last touched
 
 // 'pencil' is the pen tool with the pencil style, given its own button like Notability
 const TOOLS = [
@@ -2405,29 +2407,88 @@ export class Editor {
     ]);
   }
 
+  // Notability-style "More" panel: grouped cards, sub-menus open in place
   moreMenu(anchor) {
+    const row = (label, icon, fn, { sub, badge, chev } = {}) => h('button', { class: 'np-row', onClick: () => { closePopover(); fn(); } },
+      badge ? h('span', { class: 'np-badge' }, badge) : null,
+      h('span', { class: 'np-text' }, h('span', { class: 'np-label' }, label), sub ? h('small', {}, sub) : null),
+      h('span', { class: 'np-ico', html: icons[chev ? 'nRight' : icon] }));
+    const card = (...rows) => h('div', { class: 'np-card' }, ...rows);
+    const st = this.syncStatus || {};
+    const synced = st.last ? 'Last synced: ' + fmtSynced(st.last) : st.state === 'signedout' || !st.state ? 'Saved on this device' : 'Not synced yet';
+    const lockBtn = h('button', { class: 'np-foot' + (this.meta.locked ? ' on' : ''), title: this.meta.locked ? 'Unlock note' : 'Lock note (read only)', 'aria-label': 'Lock note', html: icons.nPenOff, onClick: () => { closePopover(); this.toggleLock(); } });
+    popover(anchor, h('div', { class: 'np-panel' },
+      card(
+        row('Share settings', 'nPersonAdd', () => this.shareNote()),
+        row('Quick export', 'nExport', () => this.exportPDF(), { sub: 'PDF, All Pages' }),
+        row('Export as…', 'nExportAs', () => this.exportMenu(anchor))),
+      card(
+        row('Comments', 'nComment', () => this.addSticky()),
+        row('Start study session', 'nStopwatch', () => this.timerMenu(anchor))),
+      card(
+        row('Template settings', 'nTemplate', () => this.paperMenu(anchor)),
+        row('View settings', '', () => this.viewMenu(anchor), { chev: true })),
+      card(row(this.meta.title, '', () => this.noteMenu(anchor), { sub: synced, chev: true })),
+      card(this.inSplit()
+        ? row('Close this side', 'nSide', () => this.exit())
+        : row('Side by side', 'nSide', () => this.splitMenu(anchor), { badge: 'New' })),
+      h('div', { class: 'np-card np-foots' },
+        h('button', { class: 'np-foot', title: 'Writing settings', 'aria-label': 'Writing settings', html: icons.nGear, onClick: () => this.writingSettings(anchor) }),
+        lockBtn)), { className: 'np-pop' });
+  }
+
+  viewMenu(anchor) {
     const fd = settings.fingerDraw;
     menu(anchor, [
+      { label: this.curDark() ? 'Light pages' : 'Dark pages', icon: this.curDark() ? 'sun' : 'moon', onClick: () => this.toggleDarkMode() },
+      { label: 'Fit to width', icon: 'zoomFit', onClick: () => this.fitWidth(false) },
+      { label: 'Full screen', icon: 'expand', onClick: () => this.toggleFocus() },
+      { label: `Draw with finger: ${{ auto: 'Auto', on: 'On', off: 'Off' }[fd]}`, icon: 'hand', onClick: () => this.setFinger({ auto: 'on', on: 'off', off: 'auto' }[fd]) },
+      { label: 'Page thumbnails', icon: 'pages', onClick: () => this.togglePagesPanel() },
+    ]);
+  }
+
+  noteMenu(anchor) {
+    menu(anchor, [
+      { label: 'Rename note…', icon: 'text', onClick: () => { this.titleInput.focus(); this.titleInput.select(); } },
+      { label: 'Find in note', icon: 'search', onClick: () => this.findPanel() },
+      { label: 'Go to page…', icon: 'pages', onClick: () => this.goToPage() },
+      { label: this.pages[this.currentIndex()].bookmark ? 'Remove bookmark' : 'Bookmark this page', icon: 'bookmark', onClick: () => this.toggleBookmark() },
+      '-',
       { label: 'Import PDF pages…', icon: 'pdf', onClick: () => this.insertPDF() },
       { label: 'Import images as pages…', icon: 'image', onClick: () => this.insertImagePages() },
       { label: 'Paste', icon: 'paste', onClick: () => this.paste() },
-      { label: 'Fit to width', icon: 'zoomFit', onClick: () => this.fitWidth(false) },
-      { label: this.curDark() ? 'Light pages' : 'Dark pages', icon: this.curDark() ? 'sun' : 'moon', onClick: () => this.toggleDarkMode() },
-      { label: 'Full screen', icon: 'expand', onClick: () => this.toggleFocus() },
       '-',
-      { label: `Draw with finger: ${{ auto: 'Auto', on: 'On', off: 'Off' }[fd]}`, icon: 'hand', onClick: () => this.setFinger({ auto: 'on', on: 'off', off: 'auto' }[fd]) },
       { label: 'Gestures help', icon: 'hand', onClick: () => this.gestureHelp() },
       { label: 'Quick tips', icon: 'help', onClick: () => this.showTips(anchor) },
       '-',
-      { label: this.pages[this.currentIndex()].bookmark ? 'Remove bookmark' : 'Bookmark this page', icon: 'bookmark', onClick: () => this.toggleBookmark() },
-      { label: 'Go to page…', icon: 'pages', onClick: () => this.goToPage() },
-      { label: 'Find in note', icon: 'search', onClick: () => this.findPanel() },
-      this.inSplit() ? { label: 'Close this side', icon: 'close', onClick: () => this.exit() } : { label: 'Open another note side by side…', icon: 'pages', onClick: () => this.splitMenu(anchor) },
-      { label: 'Study timer…', icon: 'timer', onClick: () => this.timerMenu(anchor) },
-      { label: this.meta.locked ? 'Unlock note' : 'Lock note (read only)', icon: this.meta.locked ? 'unlock' : 'lock', onClick: () => this.toggleLock() },
-      '-',
       { label: 'Delete this page', icon: 'trash', danger: true, onClick: () => this.deletePage() },
     ]);
+  }
+
+  writingSettings(anchor) {
+    const tog = (label, key, after) => h('label', { class: 'toggle' }, h('span', {}, h('b', {}, label)),
+      (() => { const c = h('input', { type: 'checkbox', checked: !!settings[key] }); c.onchange = () => { settings[key] = c.checked; saveSettings(); if (after) after(); }; return c; })());
+    popover(anchor, h('div', { class: 'opt-pop' }, h('h4', {}, 'Writing'),
+      tog('Pressure sensitivity', 'pressure'),
+      tog('Draw & hold for shapes', 'shapeHold'),
+      tog('Return to previous tool after erasing', 'eraserAutoDeselect'),
+      tog('Add a page when you reach the end', 'autoAddPage'),
+      tog('Two-finger tap to undo', 'twoFingerUndo')), { className: 'wide' });
+  }
+
+  // Share the note as a PDF through the system share sheet (falls back to export)
+  async shareNote() {
+    if (!navigator.canShare) { this.exportMenu(this.moreBtn); return; }
+    this.commitText();
+    const pd = progressDialog('Preparing PDF…');
+    try {
+      const blob = await exportNotePDF(this.meta, this.body, (f) => pd.set(f), { returnBlob: true });
+      pd.close();
+      const file = blob && new File([blob], safeName(this.meta.title) + '.pdf', { type: 'application/pdf' });
+      if (file && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: this.meta.title });
+      else this.exportMenu(this.moreBtn);
+    } catch (e) { pd.close(); if (e.name !== 'AbortError') toast('Share failed: ' + e.message); }
   }
 
   toggleLock() {
@@ -2935,6 +2996,7 @@ export class Editor {
       : st.state === 'syncing' ? ['sync', 'Syncing…', 'busy']
       : st.state === 'synced' ? ['cloud', 'Synced', 'ok']
       : st.state === 'error' ? ['cloudOff', 'Sync paused · saved on this device', 'off'] : null;
+    this.syncStatus = st;
     P.hidden = !view;
     if (this.moreBtn) { if (view) this.moreBtn.dataset.sync = view[2]; else delete this.moreBtn.dataset.sync; }
     if (!view) return;
