@@ -37,7 +37,10 @@ export function penRadius(size, p, style) {
 }
 
 // Dense samples [x, y, p, ...] along the smoothed centre line.
-export function dense(pts, size = 2) {
+// openStart / openEnd are used for the pieces of a stroke that is still being
+// written: a piece then starts / ends exactly on the midpoint where its
+// neighbour ends / starts, so the pieces join into the same curve.
+export function dense(pts, size = 2, openStart = false, openEnd = false) {
   const n = pts.length / 3;
   const out = [];
   if (!n) return out;
@@ -62,16 +65,16 @@ export function dense(pts, size = 2) {
   const P = (i) => [pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]];
   const M = (i) => { const a = P(i - 1), b = P(i); return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]; };
   if (n === 2) { line(...P(0), ...P(1), true); return out; }
-  line(...P(0), ...M(1), true);
+  if (openStart) out.push(...M(1)); else line(...P(0), ...M(1), true);
   for (let i = 1; i < n - 1; i++) quad(...M(i), ...P(i), ...M(i + 1));
-  line(...M(n - 1), ...P(n - 1), false);
+  if (!openEnd) line(...M(n - 1), ...P(n - 1), false);
   return out;
 }
 
 // Filled outline for a pressure-sensitive pen stroke.
-export function penPath(pts, size, style = 'fountain') {
+export function penPath(pts, size, style = 'fountain', openStart = false, openEnd = false) {
   const path = new Path2D();
-  const d = dense(pts, size);
+  const d = dense(pts, size, openStart, openEnd);
   const m = d.length / 3;
   if (!m) return path;
   const R = (i) => Math.max(0.3, penRadius(size, d[i * 3 + 2], style));
@@ -106,9 +109,9 @@ export function penPath(pts, size, style = 'fountain') {
 }
 
 // Smooth centre line (highlighter, dashed pen).
-export function smoothLine(pts, size) {
+export function smoothLine(pts, size, openStart = false, openEnd = false) {
   const path = new Path2D();
-  const d = dense(pts, size);
+  const d = dense(pts, size, openStart, openEnd);
   if (!d.length) return path;
   path.moveTo(d[0], d[1]);
   if (d.length === 3) { path.lineTo(d[0] + 0.01, d[1]); return path; }
@@ -256,11 +259,36 @@ function pencilPattern(color) {
 }
 
 // Live (uncached) version used while the pen is down.
-export function drawLiveStroke(ctx, it) {
+const CHUNK = 40; // points per finished piece of a stroke being written
+
+function piecePath(it, pts, openStart, openEnd) {
+  return it.tool === 'hl' || it.tool === 'laser' || it.tool === 'tape'
+    ? smoothLine(pts, it.size, openStart, openEnd)
+    : penPath(pts, it.size, it.style, openStart, openEnd);
+}
+
+// While the pen is down only the newest few points are recomputed each frame:
+// finished pieces are kept in it.live (a growing Path2D), so a long stroke
+// costs the same per frame as a short one. `extra` are points drawn at the tip
+// but not stored (the latest raw / predicted pen position).
+export function drawLiveStroke(ctx, it, extra) {
   let path;
   if (it.shape) path = polyPath(it.pts, it.closed);
-  else if (it.tool === 'hl' || it.tool === 'laser' || it.tool === 'tape' || it.style === 'dash' || it.style === 'dot') path = smoothLine(it.pts, it.size);
-  else path = penPath(it.pts, it.size, it.style);
+  else if (it.style === 'dash' || it.style === 'dot') path = smoothLine(extra ? it.pts.concat(extra) : it.pts, it.size);
+  else {
+    const P = it.pts, n = P.length / 3;
+    const st = it.live || (it.live = { path: new Path2D(), end: 0 });
+    while (n - st.end > CHUNK + 3) {
+      const s = st.end ? st.end - 1 : 0, e = (st.end || 0) + CHUNK;
+      st.path.addPath(piecePath(it, P.slice(s * 3, (e + 1) * 3), st.end > 0, true));
+      st.end = e;
+    }
+    let tail = st.end ? P.slice((st.end - 1) * 3) : P;
+    if (extra && extra.length) tail = tail.concat(extra);
+    const tp = st.end && tail.length < 9 ? null : piecePath(it, tail, st.end > 0, false);
+    path = new Path2D(st.path);
+    if (tp) path.addPath(tp);
+  }
   drawStroke(ctx, it, it.alpha ?? 1, path);
 }
 

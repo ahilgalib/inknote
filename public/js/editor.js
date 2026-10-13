@@ -58,11 +58,11 @@ export class Editor {
     this.hidden = null;
     this.selection = null;
     this.lasers = [];
-    this.lastThumb = 0;
+    this.lastThumb = -Infinity;
     let zc = 0;
     for (const p of this.pages) for (const it of p.items) zc = Math.max(zc, it.z || 0);
     body.zc = Math.max(body.zc || 0, zc);
-    this.save = debounce(() => this.persist(), 1000);
+    this.save = debounce((force) => this.persist(force === true), 1000);
     this.baseIds = bodyIds(body);
     activeEditor = this;
     this.build();
@@ -139,7 +139,7 @@ export class Editor {
     this.main = h('canvas', { class: 'cv-main' });
     this.liveCv = h('canvas', { class: 'cv-live' });
     this.mctx = this.main.getContext('2d');
-    this.lctx = this.liveCv.getContext('2d');
+    this.lctx = this.liveCv.getContext('2d', { desynchronized: true });
     this.textarea = h('textarea', { class: 'text-edit', hidden: true, spellcheck: 'true', autocapitalize: 'sentences' });
     this.textarea.addEventListener('input', () => this.sizeTextarea());
     // keep editing while the format bar or one of its pop-ups is being used
@@ -189,7 +189,7 @@ export class Editor {
 
     this.onKey = (e) => this.handleKey(e);
     this.onKeyUp = (e) => { if (e.code === 'Space') this.spaceDown = false; };
-    this.onVis = () => { if (document.visibilityState === 'hidden') this.save.flush(); };
+    this.onVis = () => { if (document.visibilityState === 'hidden') this.save.flush(true); };
     this.onPaste = (e) => this.handlePasteEvent(e);
     this.onFont = () => this.markAllDirty();
     window.addEventListener('keydown', this.onKey);
@@ -528,7 +528,16 @@ export class Editor {
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, L.o.page.w, L.o.page.h); ctx.clip();
       ctx.__dark = isDarkPaper(L.o.page.color) && !L.o.page.bg;
-      drawLiveStroke(ctx, { type: 'stroke', tool: L.tool, style: L.style, color: L.color, size: L.size, pts: L.pts, shape: L.shape, closed: L.closed });
+      const D = L.draw && L.draw.pts === L.pts ? L.draw : (L.draw = { type: 'stroke', tool: L.tool, style: L.style, color: L.color, size: L.size, pts: L.pts });
+      D.shape = L.shape; D.closed = L.closed;
+      // the tip follows the pen exactly (stored points are lightly smoothed),
+      // plus the browser's predicted position when it offers one
+      let extra = null;
+      if (!L.shape && !L.straight) {
+        extra = [L.raw.x, L.raw.y, L.lastP];
+        if (L.pred) extra.push(L.pred.x, L.pred.y, L.lastP);
+      }
+      drawLiveStroke(ctx, D, extra);
       ctx.__dark = false;
       ctx.restore();
     }
@@ -538,7 +547,9 @@ export class Editor {
       for (const l of this.lasers) {
         this.pageTransform(ctx, l.o);
         const a = l.end ? Math.max(0, 1 - (now - l.end) / 900) : 1;
-        drawLiveStroke(ctx, { type: 'stroke', tool: 'laser', color: l.color, size: 4, pts: l.pts, alpha: a });
+        const D = l.draw && l.draw.pts === l.pts ? l.draw : (l.draw = { type: 'stroke', tool: 'laser', color: l.color, size: 4, pts: l.pts });
+        D.alpha = a;
+        drawLiveStroke(ctx, D);
         ctx.globalAlpha = 1;
       }
       if (this.lasers.some((l) => l.end)) this.requestLive();
@@ -690,6 +701,7 @@ export class Editor {
 
   onDown(e) {
     e.preventDefault();
+    window.__inkInput = performance.now();
     closePopover();
     this.rect = this.liveCv.getBoundingClientRect();
     try { this.liveCv.setPointerCapture(e.pointerId); } catch {}
@@ -792,11 +804,22 @@ export class Editor {
       p.sx = pos.x; p.sy = pos.y;
       this.moveTool(p, ev);
     }
+    const L = this.live;
+    if (L && L.pid === p.id) {
+      L.pred = null;
+      const pe = e.getPredictedEvents ? e.getPredictedEvents() : null;
+      if (pe && pe.length && !L.shape && !L.edge && !L.straight) {
+        const q = this.localPos(pe[pe.length - 1]), d = this.screenToDoc(q.x, q.y);
+        // only trust short predictions (avoids overshoot at sharp turns)
+        if (Math.hypot(q.x - p.sx, q.y - p.sy) < 14) L.pred = { x: d.x - L.o.x, y: d.y - L.o.y };
+      }
+    }
     if (this.tool === 'eraser' || this.eraserOverride) this.hover = { x: p.sx, y: p.sy };
     this.requestLive();
   }
 
   onUp(e, cancelled = false) {
+    window.__inkInput = performance.now();
     const p = this.pointers.get(e.pointerId);
     if (e.pointerType === 'pen') { this.penActive = false; this.hover = null; }
     if (!p) return;
@@ -1086,7 +1109,7 @@ export class Editor {
       const target = this.pressure(ev, L);
       const pr = L.lastP + (target - L.lastP) * 0.32;
       // light position smoothing; the curve fitting does the rest
-      const k = L.pen ? 0.6 : 0.5;
+      const k = L.pen ? 0.5 : 0.45;
       L.sx += (lx - L.sx) * k; L.sy += (ly - L.sy) * k;
       L.pts.push(round2(L.sx), round2(L.sy), Math.round(pr * 1000) / 1000);
       L.lastP = pr;
@@ -2401,7 +2424,7 @@ export class Editor {
     menu(anchor, [
       { label: 'Export as PDF', icon: 'pdf', onClick: () => this.exportPDF() },
       { label: 'Export this page as image', icon: 'image', onClick: () => this.exportPNG() },
-      { label: 'Export note file (.inknote.json)', icon: 'download', onClick: () => { this.save.flush(); exportNoteFile(this.meta); } },
+      { label: 'Export note file (.inknote.json)', icon: 'download', onClick: () => { this.save.flush(true); exportNoteFile(this.meta); } },
       '-',
       { label: 'Print', icon: 'paper', onClick: () => this.print() },
     ]);
@@ -2731,7 +2754,7 @@ export class Editor {
     if (mod && (k === '=' || k === '+')) { e.preventDefault(); this.zoomAt(this.vw / 2, this.vh / 2, this.cam.s * 1.2); return; }
     if (mod && k === '-') { e.preventDefault(); this.zoomAt(this.vw / 2, this.vh / 2, this.cam.s / 1.2); return; }
     if (mod && k === '0') { e.preventDefault(); this.fitWidth(false); return; }
-    if (mod && k === 's') { e.preventDefault(); this.save.flush(); toast('Saved'); return; }
+    if (mod && k === 's') { e.preventDefault(); this.save.flush(true); toast('Saved'); return; }
     if (mod && k === 'f') { e.preventDefault(); this.findPanel(); return; }
     if (mod) return;
     if ((k === 'delete' || k === 'backspace') && this.selection) { e.preventDefault(); if (!this.meta.locked) this.deleteSelection(); return; }
@@ -2959,9 +2982,11 @@ export class Editor {
   changed() { this.dirty = true; this.save(); }
 
   // Saving never runs while the pen is on the glass (keeps writing smooth).
-  async persist() {
+  async persist(force = false) {
     if (this.pointers.size || this.live || this.erase || this.drag) { this.save(); return; }
     if (this.saving) { this.save(); return; }
+    // still writing (short pause between words): wait, saving a big note can stall the next stroke
+    if (performance.now() - (window.__inkInput || 0) < 1800 && !force) { this.save(); return; }
     this.saving = true;
     try {
       this.dirty = false;
@@ -2970,6 +2995,7 @@ export class Editor {
       if (performance.now() - this.lastThumb > 20000) {
         this.lastThumb = performance.now();
         await new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: 2000 }) : setTimeout(r, 200)));
+        if (!force && performance.now() - (window.__inkInput || 0) < 1800) { this.lastThumb = -Infinity; return; }
         this.meta.thumb = await makeThumb(this.body);
         await db.put('notes', this.meta);
       }
@@ -2983,7 +3009,7 @@ export class Editor {
   async flushSave() {
     if (!this.dirty || this.pointers.size || this.live || this.erase || this.drag) return;
     this.save.cancel();
-    await this.persist();
+    await this.persist(true);
   }
 
   isBusy() { return this.dirty || this.saving || this.pointers.size > 0 || !!this.textEdit || !!this.rec; }
@@ -3050,10 +3076,10 @@ export class Editor {
     if (this.rec) await this.stopRecord();
     this.stopPlayback(true);
     this.save.cancel();
-    this.lastThumb = 0;
+    this.lastThumb = -Infinity;
     this.pointers.clear();
     this.live = null;
-    await this.persist();
+    await this.persist(true);
     this.destroy();
     this.onExit();
   }

@@ -13,6 +13,9 @@ import { SIZES } from './templates.js';
 import { templateGallery, templateCard } from './gallery.js';
 import { account, onStatus, signIn, signUp, signOut, updateName, deleteAccount, syncNow, getStatus, signInGoogle, serverConfig } from './sync.js';
 
+const NOTE_TABS = ['all', 'recent', 'fav', 'unfiled'];
+// "13 Oct, 2026"
+const fmtDay = (t) => { const d = new Date(t); return `${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3)}, ${d.getFullYear()}`; };
 const FOLDER_COLORS = ['#e5484d', '#f76b15', '#f5b400', '#30a46c', '#0090ff', '#6e56cf', '#d6409f', '#7c8088'];
 const REPO = 'https://github.com/ahilgalib/inknote';
 export const APP_VERSION = '2026.10.11 (9)';
@@ -82,46 +85,36 @@ export class Library {
   // ---------------------------------------------------------------- sidebar --
 
   renderSide() {
-    const search = h('input', { class: 'search', type: 'search', placeholder: 'Search by title', value: this.query, 'aria-label': 'Search notes' });
+    const search = h('input', { class: 'search', type: 'search', placeholder: 'Search', value: this.query, 'aria-label': 'Search notes' });
     search.addEventListener('input', () => {
       this.query = search.value;
-      if (this.query && this.view === 'home') { this.view = 'all'; this.renderMainOnly(); search.focus(); }
+      if (this.query && !NOTE_TABS.includes(this.view) && !this.view.startsWith('folder:')) { this.view = 'all'; this.renderMainOnly(); search.focus(); }
       else this.renderGrid();
     });
-    const noteRows = [...this.notes].sort((a, b) => b.updated - a.updated).slice(0, 8).map((n) =>
-      h('button', { class: 'side-item', onClick: () => this.openNote(n.id) }, h('span', { class: 'si', html: icons.notes }), h('span', { class: 'label' }, n.title)));
+    const nav = (icon, label, on, onClick, count) => h('button', { class: 'nav-item' + (on ? ' on' : ''), onClick },
+      h('span', { class: 'nav-ico', html: icons[icon] }), h('span', { class: 'label' }, label), count != null ? h('span', { class: 'count' }, String(count)) : null);
     const folderRows = this.folders.map((f) => h('button', {
-      class: 'side-item' + (this.view === 'folder:' + f.id ? ' on' : ''), onClick: () => this.go('folder:' + f.id),
+      class: 'nav-item folder' + (this.view === 'folder:' + f.id ? ' on' : ''), onClick: () => this.go('folder:' + f.id),
       onContextmenu: (e) => { e.preventDefault(); this.folderMenu(e.currentTarget, f); },
-    }, h('span', { class: 'si', html: icons.folder, style: { color: f.color } }), h('span', { class: 'label' }, f.name),
-    h('span', { class: 'count' }, String(this.notes.filter((n) => n.subjectId === f.id).length)),
+    }, h('span', { class: 'fdot', style: { background: f.color } }), h('span', { class: 'label' }, f.name),
     h('span', { class: 'side-more', html: icons.more, onClick: (e) => { e.stopPropagation(); this.folderMenu(e.currentTarget, f); } })));
 
     this.syncCard = h('div', { class: 'sync-card' });
     return h('nav', { class: 'lib-side' },
       h('div', { class: 'side-top' },
-        h('button', { class: 'brand', onClick: () => this.go('home') }, h('img', { src: 'icons/icon.svg', alt: '' }), h('span', {}, 'inknote')),
-        h('div', { class: 'grow' }),
-        h('button', { class: 'icon-btn', title: 'New note', 'aria-label': 'New note', html: icons.pen, onClick: () => this.create() })),
-      h('div', { class: 'side-search' }, h('span', { html: icons.search }), search),
+        h('button', { class: 'icon-btn gear', title: 'Settings', 'aria-label': 'Settings', html: icons.nGear, onClick: () => this.settingsSheet() })),
+      h('label', { class: 'side-search' }, h('span', { html: icons.search }), search),
       h('div', { class: 'side-scroll' },
-        h('div', { class: 'side-h' }, h('button', { class: 'side-h-btn', onClick: () => this.go('all') }, 'Notes'),
-          h('button', { class: 'icon-btn sm', title: 'Import', 'aria-label': 'Import', html: icons.download, onClick: (e) => this.importMenu(e.currentTarget) })),
-        h('button', { class: 'side-item' + (this.view === 'all' ? ' on' : ''), onClick: () => this.go('all') },
-          h('span', { class: 'si', html: icons.template }), h('span', { class: 'label' }, 'All notes'), h('span', { class: 'count' }, String(this.notes.length))),
-        h('button', { class: 'side-item' + (this.view === 'fav' ? ' on' : ''), onClick: () => this.go('fav') },
-          h('span', { class: 'si', html: icons.star }), h('span', { class: 'label' }, 'Favorites'), h('span', { class: 'count' }, String(this.notes.filter((n) => n.starred).length))),
-        noteRows,
+        h('div', { class: 'nav' },
+          nav('nHome', 'Home', this.view === 'home', () => this.go('home')),
+          nav('nNotes', 'Notes', NOTE_TABS.includes(this.view), () => this.go('all'), this.notes.length),
+          nav('nGallery', 'Gallery', false, () => this.fromTemplate())),
         h('div', { class: 'side-h' }, h('span', {}, 'Folders'),
           h('button', { class: 'icon-btn sm', title: 'New folder', 'aria-label': 'New folder', html: icons.plus, onClick: () => this.newFolder() })),
-        folderRows.length ? folderRows : h('button', { class: 'folder-empty', onClick: () => this.newFolder() }, h('span', { html: icons.folder }), 'Organize notes into folders.'),
-        h('button', { class: 'side-item trash-item' + (this.view === 'trash' ? ' on' : ''), onClick: () => this.go('trash') },
-          h('span', { class: 'si', html: icons.trash }), h('span', { class: 'label' }, 'Recently Deleted'), this.trash.length ? h('span', { class: 'count' }, String(this.trash.length)) : null)),
-      this.syncCard,
-      h('div', { class: 'side-foot' },
-        h('button', { class: 'icon-btn', title: 'Settings', 'aria-label': 'Settings', html: icons.settings, onClick: () => this.settingsSheet() }),
-        h('div', { class: 'grow' }),
-        h('button', { class: 'icon-btn', title: 'Home', 'aria-label': 'Home', html: icons.home, onClick: () => this.go('home') })));
+        folderRows.length ? folderRows : h('button', { class: 'folder-empty', onClick: () => this.newFolder() }, 'Organize notes into folders.'),
+        h('div', { class: 'nav bottom' },
+          nav('trash', 'Recently Deleted', this.view === 'trash', () => this.go('trash'), this.trash.length || null))),
+      this.syncCard);
   }
 
   renderSync() {
@@ -157,19 +150,18 @@ export class Library {
     main.addEventListener('dragover', (e) => e.preventDefault());
     main.addEventListener('drop', (e) => { e.preventDefault(); this.importFiles([...e.dataTransfer.files]); });
     main.append(h('div', { class: 'side-scrim', onClick: () => this.el.classList.remove('side-open') }));
-    if (this.view === 'home') { main.append(h('div', { class: 'phone-bar' }, menuBtn, h('div', { class: 'grow' }), h('button', { class: 'icon-btn', 'aria-label': 'New note', html: icons.pen, onClick: () => this.create() })), this.renderHome()); return main; }
+    if (this.view === 'home') { main.append(this.topBar(menuBtn), this.renderHome()); return main; }
 
     const folder = this.view.startsWith('folder:') ? this.folders.find((f) => 'folder:' + f.id === this.view) : null;
-    const title = this.view === 'trash' ? 'Recently Deleted' : this.view === 'fav' ? 'Favorites' : folder ? folder.name : 'All notes';
-    main.append(h('header', { class: 'lib-head' },
-      menuBtn,
-      h('h1', {}, folder ? h('span', { class: 'dot big', style: { background: folder.color } }) : null, title),
-      h('div', { class: 'grow' }),
-      this.view === 'trash' ? null : h('button', { class: 'btn' + (this.selecting ? ' primary' : ''), onClick: () => { this.selecting = !this.selecting; this.picked.clear(); this.renderMainOnly(); } }, this.selecting ? 'Done' : 'Select'),
-      this.view === 'trash' ? null : h('button', { class: 'icon-btn', title: settings.libView === 'list' ? 'Grid view' : 'List view', 'aria-label': 'Change view', html: icons[settings.libView === 'list' ? 'grid' : 'list'], onClick: () => { settings.libView = settings.libView === 'list' ? 'grid' : 'list'; saveSettings(); this.renderMainOnly(); } }),
-      this.view === 'trash' ? null : h('button', { class: 'icon-btn', title: 'Sort', 'aria-label': 'Sort', html: icons.menu, onClick: (e) => this.sortMenu(e.currentTarget) }),
-      this.view === 'trash' ? (this.trash.length ? h('button', { class: 'btn', onClick: () => this.emptyTrash() }, 'Empty') : null)
-        : h('button', { class: 'btn primary', onClick: (e) => this.newMenu(e.currentTarget) }, h('span', { html: icons.plus }), h('span', { class: 'hide-xs' }, 'New'))));
+    const tabs = NOTE_TABS.includes(this.view);
+    const title = this.view === 'trash' ? 'Recently Deleted' : folder ? folder.name : 'All Notes';
+    main.append(this.topBar(menuBtn, this.view === 'trash'
+      ? (this.trash.length ? h('button', { class: 'btn', onClick: () => this.emptyTrash() }, 'Empty') : null)
+      : this.selecting ? h('button', { class: 'btn primary', onClick: () => { this.selecting = false; this.picked.clear(); this.renderMainOnly(); } }, 'Done') : null),
+    h('div', { class: 'lib-title' },
+      h('h1', {}, folder ? h('span', { class: 'fdot big', style: { background: folder.color } }) : null, title),
+      tabs ? h('div', { class: 'tabs', role: 'tablist' }, [['all', 'All Notes'], ['recent', 'Recents'], ['fav', 'Favorites'], ['unfiled', 'Unfiled']].map(([v, l]) =>
+        h('button', { class: 'tab' + (this.view === v ? ' on' : ''), role: 'tab', onClick: () => this.go(v) }, l))) : null));
     if (this.view === 'trash') main.append(h('p', { class: 'muted pad-x' }, 'Notes stay here for 30 days, then they are deleted for good.'));
     this.grid = h('div', { class: 'grid' + (settings.libView === 'list' ? ' list' : '') + (this.selecting ? ' selecting' : '') });
     main.append(h('div', { class: 'grid-wrap' }, this.grid));
@@ -180,6 +172,33 @@ export class Library {
     }
     this.renderGrid();
     return main;
+  }
+
+  // bell · more · + New, top right (like Notability)
+  topBar(menuBtn, extra) {
+    return h('header', { class: 'lib-top' }, menuBtn, h('div', { class: 'grow' }), extra,
+      h('button', { class: 'icon-btn top-ico', title: 'Sync & account', 'aria-label': 'Sync & account', html: icons.nBell, onClick: (e) => this.statusPop(e.currentTarget) }),
+      h('button', { class: 'icon-btn top-ico', title: 'More', 'aria-label': 'More', html: icons.nMore, onClick: (e) => this.viewMenu(e.currentTarget) }),
+      h('button', { class: 'new-btn', onClick: (e) => this.newMenu(e.currentTarget) }, h('span', { html: icons.plus }), 'New'));
+  }
+
+  statusPop(anchor) {
+    const C = h('div', { class: 'sync-card pop' });
+    const keep = this.syncCard;
+    this.syncCard = C; this.renderSync(); this.syncCard = keep;
+    popover(anchor, C, { className: 'wide' });
+  }
+
+  viewMenu(anchor) {
+    const list = settings.libView === 'list';
+    menu(anchor, [
+      this.view === 'trash' || this.view === 'home' ? null : { label: 'Select notes', icon: 'check2', onClick: () => { this.selecting = true; this.picked.clear(); this.renderMainOnly(); } },
+      { label: list ? 'Grid view' : 'List view', icon: list ? 'grid' : 'list', onClick: () => { settings.libView = list ? 'grid' : 'list'; saveSettings(); this.renderMainOnly(); } },
+      { label: 'Sort…', icon: 'menu', onClick: () => this.sortMenu(anchor) },
+      '-',
+      { label: 'Import…', icon: 'download', onClick: () => this.importMenu(anchor) },
+      { label: 'Settings', icon: 'settings', onClick: () => this.settingsSheet() },
+    ]);
   }
 
   renderHome() {
@@ -225,8 +244,11 @@ export class Library {
     let list = this.view === 'trash' ? this.trash : this.notes;
     if (this.view.startsWith('folder:')) list = list.filter((n) => 'folder:' + n.subjectId === this.view);
     if (this.view === 'fav') list = list.filter((n) => n.starred);
+    if (this.view === 'unfiled') list = list.filter((n) => !n.subjectId || !this.folders.some((f) => f.id === n.subjectId));
+    if (this.view === 'recent') list = [...list].filter((n) => n.opened).sort((a, b) => b.opened - a.opened).slice(0, 30);
     if (q) list = list.filter((n) => (n.title + ' ' + (n.text || '')).toLowerCase().includes(q));
     const sort = settings.sort;
+    if (this.view === 'recent') return list;
     return [...list].sort((a, b) => this.view === 'trash' ? b.trashed - a.trashed : sort === 'title' ? a.title.localeCompare(b.title) : sort === 'created' ? b.created - a.created : b.updated - a.updated);
   }
 
@@ -286,9 +308,9 @@ export class Library {
       h('div', { class: 'card-meta' },
         h('div', { class: 'card-text' },
           h('div', { class: 'card-title' }, n.starred ? h('span', { class: 'star', html: icons.starOn }) : null, n.locked ? h('span', { class: 'star', html: icons.lock }) : null, n.title),
-          h('div', { class: 'card-sub' }, folder ? h('span', { class: 'dot', style: { background: folder.color } }) : null,
-            trashed ? `Deleted ${timeAgo(n.trashed)}` : `${timeAgo(n.updated)} · ${n.pageCount || 1} p`)),
-        h('button', { class: 'icon-btn sm', title: 'Note options', 'aria-label': 'Note options', html: icons.more, onClick: (e) => trashed ? this.trashMenu(e.currentTarget, n) : this.noteMenu(e.currentTarget, n) })));
+          h('div', { class: 'card-sub' }, trashed ? `Deleted ${timeAgo(n.trashed)}` : fmtDay(n.updated))),
+        folder ? h('span', { class: 'fchip', style: '--fc:' + folder.color }, folder.name) : null,
+        h('button', { class: 'icon-btn sm card-more', title: 'Note options', 'aria-label': 'Note options', html: icons.more, onClick: (e) => { e.stopPropagation(); trashed ? this.trashMenu(e.currentTarget, n) : this.noteMenu(e.currentTarget, n); } })));
     let lp;
     card.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') lp = setTimeout(() => { lp = 'fired'; trashed ? this.trashMenu(card, n) : this.noteMenu(card, n); }, 550); });
     card.addEventListener('pointerup', () => clearTimeout(lp));

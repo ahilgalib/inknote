@@ -121,11 +121,13 @@ async function gunzipText(buf) {
 export function scheduleSync(ms = 3000) {
   if (!acct) return;
   clearTimeout(timer);
-  timer = setTimeout(syncNow, ms);
+  timer = setTimeout(() => { timer = 0; syncNow(true); }, ms);
 }
 
-export function syncNow() {
+export function syncNow(background = false) {
   if (!acct) { setStatus({ state: 'signedout' }); return Promise.resolve(); }
+  // never sync in the middle of writing: it can stall the pen for a moment
+  if (background === true && performance.now() - (window.__inkInput || 0) < 2500 && document.visibilityState === 'visible') { scheduleSync(2500); return Promise.resolve(); }
   if (!navigator.onLine) { setStatus({ state: 'offline' }); return Promise.resolve(); }
   if (running) { running.again = true; return running.p; }
   const r = { again: false };
@@ -337,6 +339,6 @@ export function startSync() {
   window.addEventListener('online', () => syncNow());
   window.addEventListener('offline', () => setStatus({ state: 'offline' }));
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(300); });
-  setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 45000);
+  setInterval(() => { if (document.visibilityState === 'visible') syncNow(true); }, 45000);
   if (acct) syncNow(); else setStatus({ state: 'signedout' });
 }

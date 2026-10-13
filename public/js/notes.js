@@ -109,7 +109,7 @@ export async function touchMeta(meta) {
 export async function makeThumb(body) {
   const page = body.pages[0];
   if (!page) return null;
-  const c = await renderPageCanvas(page, 300 / page.w);
+  const c = await renderPageCanvas(page, 420 / page.w);
   const url = c.toDataURL('image/jpeg', 0.75);
   c.width = c.height = 0;
   return url;
