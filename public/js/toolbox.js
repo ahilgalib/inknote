@@ -51,6 +51,7 @@ export const toolboxMethods = {
         tile('sparkle', 'Stickers', 'Emoji stickers', () => this.stickerPicker(anchor)),
         tile('note', 'Sticky note', 'A coloured note card', () => this.addSticky()),
         tile('search', 'Find', 'Search this note', () => this.findPanel()),
+        tile('nCalc', 'Calculator', 'Basic & scientific', () => this.toggleCalculator(), !!this.calc),
         tile('dropper', 'Eyedropper', 'Pick a colour from the page', () => this.startEyedropper()),
         tile('timer', 'Study timer', 'Focus sessions & breaks', () => this.timerMenu(anchor)),
         tile('check2', 'Tape quiz', 'Reveal answers one by one', () => this.startQuiz()),

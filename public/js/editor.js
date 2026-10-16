@@ -16,6 +16,7 @@ import { popover, menu, closePopover, confirmDialog, progressDialog, colorPopove
 import { fontStack, loadFont } from './fonts.js';
 import { fontPicker } from './fontpicker.js';
 import { templateGallery } from './gallery.js';
+import { Calculator } from './calculator.js';
 
 const GAP = 30;          // space between pages (doc px)
 const TOP = 20;          // space above first page (screen px)
@@ -95,6 +96,7 @@ export class Editor {
     const fingerBtn = () => { const b = tbtn('nFinger', 'Draw with finger', () => this.setFinger(fingerDraws() ? 'off' : 'on'), 'finger-btn'); this.fingerBtns.push(b); return b; };
     this.zoomBtn = tbtn('nZoom', 'Zoom window: write big, it lands small', () => { this.toggleZoom(); this.renderToolbar(); });
     this.rulerBtn = tbtn('nRuler', 'Ruler', () => { this.toggleRuler(); this.renderToolbar(); });
+    this.calcBtn = tbtn('nCalc', 'Calculator', () => this.toggleCalculator());
     this.toolboxBtn = tbtn('nGear', 'Toolbox: stickers, find, eyedropper, timer…', (e) => this.toolboxMenu(e.currentTarget));
     this.toolsIsland = island('tools',
       h('div', { class: 'tb-page p1' }, TOOLS.map(toolBtn),
@@ -103,7 +105,7 @@ export class Editor {
         tbtn('nRight', 'More tools', page(2), 'chev')),
       h('div', { class: 'tb-page p2' }, fingerBtn(), this.zoomBtn,
         toolBtn(['laser', 'Laser pointer', 'K', 'nLaser']), toolBtn(['tape', 'Tape', 'Y', 'nTape']), this.rulerBtn,
-        recBtn(), tbtn('nComment', 'Sticky note', () => this.addSticky()), this.toolboxBtn,
+        this.calcBtn, recBtn(), tbtn('nComment', 'Sticky note', () => this.addSticky()), this.toolboxBtn,
         tbtn('nLeft', 'Back to writing tools', page(1), 'chev')));
     this.toolsIsland.dataset.page = 1;
 
@@ -3084,7 +3086,22 @@ export class Editor {
     this.onExit();
   }
 
+  toggleCalculator() {
+    if (this.calc) { this.calc.close(); return; }
+    this.calc = new Calculator({
+      parent: this.stage,
+      onInsert: (text) => {
+        if (this.meta.locked) { toast('This note is locked'); return; }
+        this.insertTextBox(text, { x: Math.max(20, this.vw / 2 - 200), y: this.vh * 0.35 });
+        toast('Added to the page');
+      },
+      onClose: () => { this.calc = null; this.calcBtn.classList.remove('on'); },
+    });
+    this.calcBtn.classList.add('on');
+  }
+
   destroy() {
+    if (this.calc) this.calc.close();
     clearTimeout(this.remoteT);
     clearInterval(this.timerTick);
     if (activeEditor === this) activeEditor = null;

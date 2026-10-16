@@ -17,6 +17,7 @@ Works offline, installs to your home screen, and syncs automatically across all 
 - Shapes can be filled; page bookmarks; go to page; lock a note (read only)
 - **Notability-style layout**: centred tools with a floating style tray
 - **Side by side (multi-note)**: open two notes next to each other, copy & paste between them
+- **Calculator** (basic & scientific): live answer while you type, history, copy, add the result to the page
 - **Study timer** (focus / break sessions) and **Tape quiz** (reveal covered answers one by one)
 - Palm rejection: once a Pencil is used, fingers only scroll and zoom (Auto / On / Off)
 - Notability-style eraser: **precise**, **whole stroke**, or **highlighter only** — and it jumps back to your pen after erasing
