@@ -4,6 +4,7 @@ import { db, requestPersistence } from './db.js';
 import { applyTheme } from './settings.js';
 import { Library } from './library.js';
 import { Editor } from './editor.js';
+import { QuickNote } from './quicknote.js';
 import { toast, h } from './util.js';
 import { startSync, setBeforeSync } from './sync.js';
 import { loadInstalledFonts } from './fonts.js';
@@ -38,7 +39,7 @@ async function openEditor(id) {
   const body = meta && await db.get('bodies', id);
   if (!meta || !body) return null;
   meta.opened = Date.now();
-  const ed = new Editor(meta, body, {
+  const ed = new (meta.kind === 'quick' ? QuickNote : Editor)(meta, body, {
     onExit: () => {
       editors = editors.filter((x) => x !== ed);
       location.hash = editors.length ? '#/note/' + encodeURIComponent(editors[0].meta.id) : '';
