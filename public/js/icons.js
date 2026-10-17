@@ -134,4 +134,5 @@ export const icons = {
   nDrive: s('<path d="M8.6 3.5h6.8l6.1 10.6-3.4 5.9H5.9l-3.4-5.9z"/><path d="M8.6 3.5l6.1 10.6h6.8M15.4 3.5L9.3 14.1l-3.4 5.9M2.5 14.1h12.2"/>'),
   nQuick: s('<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8.5h8M8 12.5h5"/><path d="M8 16.5l1.3 1.3 2.4-2.6"/>'),
   nNumList: s('<path d="M10 6h10M10 12h10M10 18h10"/><path d="M4 4.5l1.5-1v5M3.8 13.5a1.6 1.6 0 113 .8L4 17h3"/>'),
+  nStack: s('<rect x="6" y="8" width="14" height="12" rx="2.5"/><path d="M4 16V7.5A2.5 2.5 0 016.5 5H16"/><path d="M13 11.5v5M10.5 14h5"/>'),
 };

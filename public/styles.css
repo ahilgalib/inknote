@@ -848,3 +848,42 @@ button.act-card:hover { border-color: var(--accent); }
 /* quick note cards in the library: the text itself is the preview */
 .thumb-text { background: var(--chrome) !important; padding: 12px 14px; font-size: 13px; line-height: 1.5; color: var(--text); overflow: hidden; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
 .thumb-text .done { color: var(--muted); text-decoration: line-through; }
+
+/* ---------- folders as stacks, hold to select, drag to file ---------- */
+.stack-thumb { position: relative; background: var(--chrome) !important; overflow: visible !important; }
+.stack-layer { position: absolute; inset: 14% 14% 10%; border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.28); border: 1px solid rgba(0,0,0,.08); transition: transform .15s; }
+.stack-layer img, .stack-layer .thumb-blank { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.stack-layer .thumb-text { width: 100%; height: 100%; padding: 8px 10px; font-size: 10.5px; }
+.stack-layer.l2 { transform: translate(-10%, -7%) rotate(-7deg); filter: brightness(.82); }
+.stack-layer.l1 { transform: translate(8%, -4%) rotate(5deg); filter: brightness(.9); }
+.stack-layer.l0 { transform: none; }
+.stack-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--fc); opacity: .8; }
+.stack-empty svg { width: 54px; height: 54px; stroke-width: 1.3; }
+.library .grid:not(.list) .card.stack { border-color: color-mix(in srgb, var(--fc, #888) 0%, var(--island-line)); }
+.card.stack .card-title { display: flex; align-items: center; gap: 8px; }
+.card.stack .fdot { width: 11px; height: 11px; }
+/* drop feedback */
+.card.drop-on, .nav-item.drop-on, .crumb.drop-on { outline: 3px solid #4c9ff5; outline-offset: 2px; }
+.card.stack.drop-on .stack-layer.l1 { transform: translate(14%, -8%) rotate(9deg); }
+.card.stack.drop-on .stack-layer.l2 { transform: translate(-16%, -10%) rotate(-11deg); }
+.drag-ghost { position: fixed; left: 0; top: 0; z-index: 2000; pointer-events: none; display: flex; align-items: center; gap: 8px; max-width: 240px;
+  padding: 10px 14px; border-radius: 14px; background: var(--island); color: var(--text); border: 1px solid var(--island-line); box-shadow: 0 14px 40px rgba(0,0,0,.35); font-weight: 600; font-size: 14px; }
+.drag-ghost span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drag-ghost b { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 99px; background: #4c9ff5; color: #08162b; font-size: 12px; display: grid; place-items: center; }
+body.dragging-notes, body.dragging-notes * { cursor: grabbing !important; -webkit-user-select: none; user-select: none; }
+.library .card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.library .grid.selecting .card:not(.picked):not(.stack) .thumb { opacity: .8; }
+.pick-x { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
+.pick-x:hover { background: var(--hover); }
+.pick-x svg { width: 20px; height: 20px; }
+.crumb { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 4px -6px; padding: 4px 10px 4px 4px; border-radius: 10px; color: #4c9ff5; font-weight: 600; font-size: 15px; }
+.crumb svg { width: 18px; height: 18px; }
+.lib-title h1 .title-more { margin-left: 8px; color: var(--muted); }
+/* selection bar: everything fits on a phone, Delete always visible */
+@media (max-width: 760px) {
+  .pick-bar { left: 10px; right: 10px; transform: none; max-width: none; justify-content: space-between; gap: 0; padding: 6px 8px; overflow: hidden; }
+  .pick-count { margin-right: 4px; font-size: 13.5px; white-space: nowrap; }
+  .pick-act { min-width: 42px; height: 44px; padding: 0; }
+  .pick-act small { display: none; }
+  .pick-bar .link-btn { display: none; }
+}
