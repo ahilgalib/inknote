@@ -16,6 +16,7 @@ import { popover, menu, closePopover, confirmDialog, progressDialog, colorPopove
 import { fontStack, loadFont } from './fonts.js';
 import { fontPicker } from './fontpicker.js';
 import { templateGallery } from './gallery.js';
+import { Calculator } from './calculator.js';
 
 const GAP = 30;          // space between pages (doc px)
 const TOP = 20;          // space above first page (screen px)
@@ -27,11 +28,14 @@ const DARK_PAPER = '#141416';
 const PEN_STYLES = [['fountain', 'Fountain'], ['ball', 'Ballpoint'], ['calli', 'Calligraphy'], ['pencil', 'Pencil'], ['dash', 'Dashed'], ['dot', 'Dotted']];
 const DRAW_TOOLS = ['pen', 'hl', 'laser', 'tape'];
 let clipboard = null;    // { id, items } shared between notes (and between split panes)
-let activeEditor = null; // with two notes side by side, keys / paste go to the one last touched
+let activeEditor = null;
+// "9 Oct, 2026 • 11:35 am"
+const fmtSynced = (t) => { const d = new Date(t); return `${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3)}, ${d.getFullYear()} • ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase()}`; }; // with two notes side by side, keys / paste go to the one last touched
 
+// 'pencil' is the pen tool with the pencil style, given its own button like Notability
 const TOOLS = [
-  ['pen', 'Pen', 'P', 'pen'], ['hl', 'Highlighter', 'H', 'highlighter'], ['eraser', 'Eraser', 'E', 'eraser'],
-  ['lasso', 'Lasso', 'L', 'lasso'], ['text', 'Text', 'T', 'text'], ['hand', 'Scroll', 'Space', 'hand'],
+  ['pen', 'Pen', 'P', 'nPen'], ['pencil', 'Pencil', '', 'nPencil'], ['hl', 'Highlighter', 'H', 'nHighlighter'],
+  ['eraser', 'Eraser', 'E', 'nEraser'], ['text', 'Text', 'T', 'nText'], ['lasso', 'Lasso', 'L', 'nSelect'],
 ];
 
 export class Editor {
@@ -55,11 +59,11 @@ export class Editor {
     this.hidden = null;
     this.selection = null;
     this.lasers = [];
-    this.lastThumb = 0;
+    this.lastThumb = -Infinity;
     let zc = 0;
     for (const p of this.pages) for (const it of p.items) zc = Math.max(zc, it.z || 0);
     body.zc = Math.max(body.zc || 0, zc);
-    this.save = debounce(() => this.persist(), 1000);
+    this.save = debounce((force) => this.persist(force === true), 1000);
     this.baseIds = bodyIds(body);
     activeEditor = this;
     this.build();
@@ -77,54 +81,71 @@ export class Editor {
     this.titleInput.addEventListener('input', () => { this.meta.title = this.titleInput.value || 'Untitled note'; this.changed(); });
     this.titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.titleInput.blur(); });
 
-    this.recBtn = btn('mic', 'Record audio', () => this.toggleRecord(), 'rec-btn');
-    this.recTime = h('span', { class: 'rec-time' });
-    this.recBtn.append(this.recTime);
-
-    const topbar = h('header', { class: 'ed-top' },
-      btn('back', 'Back to library', () => this.exit()),
-      btn('pages', 'Page thumbnails', () => this.togglePagesPanel()),
-      this.titleInput,
-      h('div', { class: 'grow' }),
-      this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
-      this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'),
-      this.findAnchor = btn('search', 'Find in note (Ctrl+F)', () => this.findPanel(), 'hide-phone'),
-      this.timerBtn = h('button', { class: 'icon-btn timer-btn hide-phone', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
-      this.recBtn,
-      this.themeBtn = btn('moon', 'Dark / light pages', () => this.toggleDarkMode(), 'hide-phone'),
-      btn('template', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
-      btn('share', 'Share & export', (e) => this.exportMenu(e.currentTarget)),
-      btn('expand', 'Full screen (4-finger tap)', () => this.toggleFocus(), 'hide-phone'),
-      btn('more', 'More', (e) => this.moreMenu(e.currentTarget)));
+    // Notability-style header: three floating islands (back · tools · actions),
+    // then the note title in large type underneath.
+    const island = (cls, ...kids) => h('div', { class: 'tb-island ' + cls }, ...kids);
+    const tbtn = (icon, title, onClick, cls = '') => h('button', { class: 'tool-btn ' + cls, title, 'aria-label': title, onClick, html: icons[icon] });
+    const sep = () => h('div', { class: 'tb-sep' });
 
     this.toolBtns = {};
-    const tools = h('div', { class: 'tb-group tools' }, TOOLS.map(([id, label, key, icon]) => {
-      const b = h('button', { class: 'tool-btn', title: `${label} (${key})`, 'aria-label': label, onClick: () => this.toolTap(id), html: icons[icon] });
-      this.toolBtns[id] = b;
-      return b;
-    }),
-    this.toolboxBtn = h('button', { class: 'tool-btn', title: 'Toolbox: zoom, tape, ruler, laser, stickers…', 'aria-label': 'Toolbox', onClick: (e) => this.toolboxMenu(e.currentTarget), html: icons.toolbox }),
-    h('button', { class: 'tool-btn', title: 'Insert photo, camera, audio, PDF…', 'aria-label': 'Insert', onClick: (e) => this.insertMenu(e.currentTarget), html: icons.image }));
-    this.presetsEl = h('div', { class: 'tb-group presets' });
+    const toolBtn = ([id, label, key, icon]) => (this.toolBtns[id] = tbtn(icon, key ? `${label} (${key})` : label, () => this.toolTap(id)));
+    const recBtn = () => tbtn('nMic', 'Record audio', () => this.toggleRecord(), 'rec-btn');
+    this.tbPage = 1;
+    const page = (n) => () => { this.tbPage = n; this.toolsIsland.dataset.page = n; };
+    this.fingerBtns = [];
+    const fingerBtn = () => { const b = tbtn('nFinger', 'Draw with finger', () => this.setFinger(fingerDraws() ? 'off' : 'on'), 'finger-btn'); this.fingerBtns.push(b); return b; };
+    this.zoomBtn = tbtn('nZoom', 'Zoom window: write big, it lands small', () => { this.toggleZoom(); this.renderToolbar(); });
+    this.rulerBtn = tbtn('nRuler', 'Ruler', () => { this.toggleRuler(); this.renderToolbar(); });
+    this.calcBtn = tbtn('nCalc', 'Calculator', () => this.toggleCalculator());
+    this.toolboxBtn = tbtn('nGear', 'Toolbox: stickers, find, eyedropper, timer…', (e) => this.toolboxMenu(e.currentTarget));
+    this.toolsIsland = island('tools',
+      h('div', { class: 'tb-page p1' }, TOOLS.map(toolBtn),
+        tbtn('nInsert', 'Insert photo, camera, audio, PDF…', (e) => this.insertMenu(e.currentTarget)),
+        recBtn(), sep(), fingerBtn(),
+        tbtn('nRight', 'More tools', page(2), 'chev')),
+      h('div', { class: 'tb-page p2' }, fingerBtn(), this.zoomBtn,
+        toolBtn(['laser', 'Laser pointer', 'K', 'nLaser']), toolBtn(['tape', 'Tape', 'Y', 'nTape']), this.rulerBtn,
+        recBtn(), tbtn('nComment', 'Sticky note', () => this.addSticky()), this.toolboxBtn,
+        tbtn('nLeft', 'Back to writing tools', page(1), 'chev')));
+    this.toolsIsland.dataset.page = 1;
 
-    this.undoBtn = btn('undo', 'Undo (2-finger tap)', () => this.undo());
-    this.redoBtn = btn('redo', 'Redo (3-finger tap)', () => this.redo());
-    // phones: undo / redo live in the top bar so all tools fit on one row
-    this.undoBtnTop = btn('undo', 'Undo', () => this.undo(), 'phone-only');
-    this.redoBtnTop = btn('redo', 'Redo', () => this.redo(), 'phone-only');
-    topbar.insertBefore(this.redoBtnTop, this.syncPill);
-    topbar.insertBefore(this.undoBtnTop, this.redoBtnTop);
+    this.undoBtn = tbtn('nUndo', 'Undo (2-finger tap)', () => this.undo());
+    this.redoBtn = tbtn('nRedo', 'Redo (3-finger tap)', () => this.redo());
+    this.moreBtn = tbtn('nMore', 'More', (e) => this.moreMenu(e.currentTarget), 'more-btn');
+    this.findAnchor = this.moreBtn;
+    const topbar = h('header', { class: 'ed-top' },
+      island('back', tbtn('nBack', 'Back to library', () => this.exit())),
+      this.toolsIsland,
+      island('actions', this.undoBtn, this.redoBtn,
+        this.calcBtn,
+        // on phones these three live in the More panel to keep the bar short
+        tbtn('nShare', 'Share & export', (e) => this.exportMenu(e.currentTarget), 'wide-only'),
+        this.moreBtn,
+        tbtn('nPaper', 'Paper & templates', (e) => this.paperMenu(e.currentTarget), 'wide-only'),
+        tbtn('nPages', 'Page thumbnails', () => this.togglePagesPanel(), 'wide-only')));
+
+    this.titleInput = h('input', { class: 'title-input', value: this.meta.title, spellcheck: 'false', 'aria-label': 'Note title' });
+    this.titleInput.addEventListener('input', () => { this.meta.title = this.titleInput.value || 'Untitled note'; this.changed(); });
+    this.titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.titleInput.blur(); });
+    this.recTime = h('button', { class: 'rec-time', title: 'Stop recording', onClick: () => this.toggleRecord() });
+    const titlebar = h('div', { class: 'ed-title' },
+      this.titleInput,
+      this.recTime,
+      this.timerBtn = h('button', { class: 'icon-btn timer-btn', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
+      this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
+      this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'));
+    // the title sits under the toolbar on tablets, between back and the actions on phones
+    topbar.append(titlebar);
+
+    this.presetsEl = h('div', { class: 'tb-group presets' });
     this.optsEl = h('div', { class: 'tb-group opts' });
-    const toolbar = h('div', { class: 'ed-toolbar' },
-      h('div', { class: 'tb-group tb-first hide-phone' }, this.undoBtn, this.redoBtn),
-      h('div', { class: 'tb-sep hide-phone' }), tools);
     // Notability-style floating style tray: favourites, colours, sizes, options
     this.tray = h('div', { class: 'style-tray' }, this.presetsEl, this.optsEl);
 
     this.main = h('canvas', { class: 'cv-main' });
     this.liveCv = h('canvas', { class: 'cv-live' });
     this.mctx = this.main.getContext('2d');
-    this.lctx = this.liveCv.getContext('2d');
+    this.lctx = this.liveCv.getContext('2d', { desynchronized: true });
     this.textarea = h('textarea', { class: 'text-edit', hidden: true, spellcheck: 'true', autocapitalize: 'sentences' });
     this.textarea.addEventListener('input', () => this.sizeTextarea());
     // keep editing while the format bar or one of its pop-ups is being used
@@ -154,7 +175,7 @@ export class Editor {
     this.audioBar = h('div', { class: 'audio-bar', hidden: true });
     this.pagesPanel = h('aside', { class: 'pages-panel', hidden: true });
 
-    this.el = h('div', { class: 'editor' }, topbar, toolbar,
+    this.el = h('div', { class: 'editor' }, topbar,
       h('div', { class: 'ed-body' }, this.pagesPanel, this.stage, this.tray), this.audioBar);
 
     const cv = this.liveCv;
@@ -174,7 +195,7 @@ export class Editor {
 
     this.onKey = (e) => this.handleKey(e);
     this.onKeyUp = (e) => { if (e.code === 'Space') this.spaceDown = false; };
-    this.onVis = () => { if (document.visibilityState === 'hidden') this.save.flush(); };
+    this.onVis = () => { if (document.visibilityState === 'hidden') this.save.flush(true); };
     this.onPaste = (e) => this.handlePasteEvent(e);
     this.onFont = () => this.markAllDirty();
     window.addEventListener('keydown', this.onKey);
@@ -213,7 +234,7 @@ export class Editor {
     parent.append(this.el);
     this.resize();
     this.lockBtn.hidden = !this.meta.locked;
-    if (!settings.tipsSeen) setTimeout(() => { if (this.el.isConnected) this.showTips(this.toolboxBtn); }, 700);
+    if (!settings.tipsSeen) setTimeout(() => { if (this.el.isConnected) this.showTips(this.moreBtn); }, 700);
   }
 
   resize() {
@@ -375,7 +396,6 @@ export class Editor {
     const dk = this.curDark();
     if (dk !== this.lastDark) {
       this.lastDark = dk;
-      this.themeBtn.innerHTML = icons[dk ? 'sun' : 'moon'];
       this.renderToolbar();
     }
   }
@@ -514,7 +534,16 @@ export class Editor {
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, L.o.page.w, L.o.page.h); ctx.clip();
       ctx.__dark = isDarkPaper(L.o.page.color) && !L.o.page.bg;
-      drawLiveStroke(ctx, { type: 'stroke', tool: L.tool, style: L.style, color: L.color, size: L.size, pts: L.pts, shape: L.shape, closed: L.closed });
+      const D = L.draw && L.draw.pts === L.pts ? L.draw : (L.draw = { type: 'stroke', tool: L.tool, style: L.style, color: L.color, size: L.size, pts: L.pts });
+      D.shape = L.shape; D.closed = L.closed;
+      // the tip follows the pen exactly (stored points are lightly smoothed),
+      // plus the browser's predicted position when it offers one
+      let extra = null;
+      if (!L.shape && !L.straight) {
+        extra = [L.raw.x, L.raw.y, L.lastP];
+        if (L.pred) extra.push(L.pred.x, L.pred.y, L.lastP);
+      }
+      drawLiveStroke(ctx, D, extra);
       ctx.__dark = false;
       ctx.restore();
     }
@@ -524,7 +553,9 @@ export class Editor {
       for (const l of this.lasers) {
         this.pageTransform(ctx, l.o);
         const a = l.end ? Math.max(0, 1 - (now - l.end) / 900) : 1;
-        drawLiveStroke(ctx, { type: 'stroke', tool: 'laser', color: l.color, size: 4, pts: l.pts, alpha: a });
+        const D = l.draw && l.draw.pts === l.pts ? l.draw : (l.draw = { type: 'stroke', tool: 'laser', color: l.color, size: 4, pts: l.pts });
+        D.alpha = a;
+        drawLiveStroke(ctx, D);
         ctx.globalAlpha = 1;
       }
       if (this.lasers.some((l) => l.end)) this.requestLive();
@@ -676,6 +707,7 @@ export class Editor {
 
   onDown(e) {
     e.preventDefault();
+    window.__inkInput = performance.now();
     closePopover();
     this.rect = this.liveCv.getBoundingClientRect();
     try { this.liveCv.setPointerCapture(e.pointerId); } catch {}
@@ -778,11 +810,22 @@ export class Editor {
       p.sx = pos.x; p.sy = pos.y;
       this.moveTool(p, ev);
     }
+    const L = this.live;
+    if (L && L.pid === p.id) {
+      L.pred = null;
+      const pe = e.getPredictedEvents ? e.getPredictedEvents() : null;
+      if (pe && pe.length && !L.shape && !L.edge && !L.straight) {
+        const q = this.localPos(pe[pe.length - 1]), d = this.screenToDoc(q.x, q.y);
+        // only trust short predictions (avoids overshoot at sharp turns)
+        if (Math.hypot(q.x - p.sx, q.y - p.sy) < 14) L.pred = { x: d.x - L.o.x, y: d.y - L.o.y };
+      }
+    }
     if (this.tool === 'eraser' || this.eraserOverride) this.hover = { x: p.sx, y: p.sy };
     this.requestLive();
   }
 
   onUp(e, cancelled = false) {
+    window.__inkInput = performance.now();
     const p = this.pointers.get(e.pointerId);
     if (e.pointerType === 'pen') { this.penActive = false; this.hover = null; }
     if (!p) return;
@@ -1072,7 +1115,7 @@ export class Editor {
       const target = this.pressure(ev, L);
       const pr = L.lastP + (target - L.lastP) * 0.32;
       // light position smoothing; the curve fitting does the rest
-      const k = L.pen ? 0.6 : 0.5;
+      const k = L.pen ? 0.5 : 0.45;
       L.sx += (lx - L.sx) * k; L.sy += (ly - L.sy) * k;
       L.pts.push(round2(L.sx), round2(L.sy), Math.round(pr * 1000) / 1000);
       L.lastP = pr;
@@ -2166,8 +2209,8 @@ export class Editor {
   }
 
   updateUndo() {
-    this.undoBtn.disabled = this.undoBtnTop.disabled = !this.undoStack.length;
-    this.redoBtn.disabled = this.redoBtnTop.disabled = !this.redoStack.length;
+    this.undoBtn.disabled = !this.undoStack.length;
+    this.redoBtn.disabled = !this.redoStack.length;
   }
 
   // ---- pages ----
@@ -2387,35 +2430,95 @@ export class Editor {
     menu(anchor, [
       { label: 'Export as PDF', icon: 'pdf', onClick: () => this.exportPDF() },
       { label: 'Export this page as image', icon: 'image', onClick: () => this.exportPNG() },
-      { label: 'Export note file (.inknote.json)', icon: 'download', onClick: () => { this.save.flush(); exportNoteFile(this.meta); } },
+      { label: 'Export note file (.inknote.json)', icon: 'download', onClick: () => { this.save.flush(true); exportNoteFile(this.meta); } },
       '-',
       { label: 'Print', icon: 'paper', onClick: () => this.print() },
     ]);
   }
 
+  // Notability-style "More" panel: grouped cards, sub-menus open in place
   moreMenu(anchor) {
+    const row = (label, icon, fn, { sub, badge, chev } = {}) => h('button', { class: 'np-row', onClick: () => { closePopover(); fn(); } },
+      badge ? h('span', { class: 'np-badge' }, badge) : null,
+      h('span', { class: 'np-text' }, h('span', { class: 'np-label' }, label), sub ? h('small', {}, sub) : null),
+      h('span', { class: 'np-ico', html: icons[chev ? 'nRight' : icon] }));
+    const card = (...rows) => h('div', { class: 'np-card' }, ...rows);
+    const st = this.syncStatus || {};
+    const synced = st.last ? 'Last synced: ' + fmtSynced(st.last) : st.state === 'signedout' || !st.state ? 'Saved on this device' : 'Not synced yet';
+    const lockBtn = h('button', { class: 'np-foot' + (this.meta.locked ? ' on' : ''), title: this.meta.locked ? 'Unlock note' : 'Lock note (read only)', 'aria-label': 'Lock note', html: icons.nPenOff, onClick: () => { closePopover(); this.toggleLock(); } });
+    popover(anchor, h('div', { class: 'np-panel' },
+      card(
+        row('Share settings', 'nPersonAdd', () => this.shareNote()),
+        row('Quick export', 'nExport', () => this.exportPDF(), { sub: 'PDF, All Pages' }),
+        row('Export as…', 'nExportAs', () => this.exportMenu(anchor))),
+      card(
+        row('Comments', 'nComment', () => this.addSticky()),
+        row('Start study session', 'nStopwatch', () => this.timerMenu(anchor))),
+      card(
+        row('Template settings', 'nTemplate', () => this.paperMenu(anchor)),
+        row('Page thumbnails', 'nPages', () => this.togglePagesPanel()),
+        row('View settings', '', () => this.viewMenu(anchor), { chev: true })),
+      card(row(this.meta.title, '', () => this.noteMenu(anchor), { sub: synced, chev: true })),
+      card(this.inSplit()
+        ? row('Close this side', 'nSide', () => this.exit())
+        : row('Side by side', 'nSide', () => this.splitMenu(anchor), { badge: 'New' })),
+      h('div', { class: 'np-card np-foots' },
+        h('button', { class: 'np-foot', title: 'Writing settings', 'aria-label': 'Writing settings', html: icons.nGear, onClick: () => this.writingSettings(anchor) }),
+        lockBtn)), { className: 'np-pop' });
+  }
+
+  viewMenu(anchor) {
     const fd = settings.fingerDraw;
     menu(anchor, [
+      { label: this.curDark() ? 'Light pages' : 'Dark pages', icon: this.curDark() ? 'sun' : 'moon', onClick: () => this.toggleDarkMode() },
+      { label: 'Fit to width', icon: 'zoomFit', onClick: () => this.fitWidth(false) },
+      { label: 'Full screen', icon: 'expand', onClick: () => this.toggleFocus() },
+      { label: `Draw with finger: ${{ auto: 'Auto', on: 'On', off: 'Off' }[fd]}`, icon: 'hand', onClick: () => this.setFinger({ auto: 'on', on: 'off', off: 'auto' }[fd]) },
+      { label: 'Page thumbnails', icon: 'pages', onClick: () => this.togglePagesPanel() },
+    ]);
+  }
+
+  noteMenu(anchor) {
+    menu(anchor, [
+      { label: 'Rename note…', icon: 'text', onClick: () => { this.titleInput.focus(); this.titleInput.select(); } },
+      { label: 'Find in note', icon: 'search', onClick: () => this.findPanel() },
+      { label: 'Go to page…', icon: 'pages', onClick: () => this.goToPage() },
+      { label: this.pages[this.currentIndex()].bookmark ? 'Remove bookmark' : 'Bookmark this page', icon: 'bookmark', onClick: () => this.toggleBookmark() },
+      '-',
       { label: 'Import PDF pages…', icon: 'pdf', onClick: () => this.insertPDF() },
       { label: 'Import images as pages…', icon: 'image', onClick: () => this.insertImagePages() },
       { label: 'Paste', icon: 'paste', onClick: () => this.paste() },
-      { label: 'Fit to width', icon: 'zoomFit', onClick: () => this.fitWidth(false) },
-      { label: this.curDark() ? 'Light pages' : 'Dark pages', icon: this.curDark() ? 'sun' : 'moon', onClick: () => this.toggleDarkMode() },
-      { label: 'Full screen', icon: 'expand', onClick: () => this.toggleFocus() },
       '-',
-      { label: `Draw with finger: ${{ auto: 'Auto', on: 'On', off: 'Off' }[fd]}`, icon: 'hand', onClick: () => this.setFinger({ auto: 'on', on: 'off', off: 'auto' }[fd]) },
       { label: 'Gestures help', icon: 'hand', onClick: () => this.gestureHelp() },
       { label: 'Quick tips', icon: 'help', onClick: () => this.showTips(anchor) },
       '-',
-      { label: this.pages[this.currentIndex()].bookmark ? 'Remove bookmark' : 'Bookmark this page', icon: 'bookmark', onClick: () => this.toggleBookmark() },
-      { label: 'Go to page…', icon: 'pages', onClick: () => this.goToPage() },
-      { label: 'Find in note', icon: 'search', onClick: () => this.findPanel() },
-      this.inSplit() ? { label: 'Close this side', icon: 'close', onClick: () => this.exit() } : { label: 'Open another note side by side…', icon: 'pages', onClick: () => this.splitMenu(anchor) },
-      { label: 'Study timer…', icon: 'timer', onClick: () => this.timerMenu(this.timerBtn) },
-      { label: this.meta.locked ? 'Unlock note' : 'Lock note (read only)', icon: this.meta.locked ? 'unlock' : 'lock', onClick: () => this.toggleLock() },
-      '-',
       { label: 'Delete this page', icon: 'trash', danger: true, onClick: () => this.deletePage() },
     ]);
+  }
+
+  writingSettings(anchor) {
+    const tog = (label, key, after) => h('label', { class: 'toggle' }, h('span', {}, h('b', {}, label)),
+      (() => { const c = h('input', { type: 'checkbox', checked: !!settings[key] }); c.onchange = () => { settings[key] = c.checked; saveSettings(); if (after) after(); }; return c; })());
+    popover(anchor, h('div', { class: 'opt-pop' }, h('h4', {}, 'Writing'),
+      tog('Pressure sensitivity', 'pressure'),
+      tog('Draw & hold for shapes', 'shapeHold'),
+      tog('Return to previous tool after erasing', 'eraserAutoDeselect'),
+      tog('Add a page when you reach the end', 'autoAddPage'),
+      tog('Two-finger tap to undo', 'twoFingerUndo')), { className: 'wide' });
+  }
+
+  // Share the note as a PDF through the system share sheet (falls back to export)
+  async shareNote() {
+    if (!navigator.canShare) { this.exportMenu(this.moreBtn); return; }
+    this.commitText();
+    const pd = progressDialog('Preparing PDF…');
+    try {
+      const blob = await exportNotePDF(this.meta, this.body, (f) => pd.set(f), { returnBlob: true });
+      pd.close();
+      const file = blob && new File([blob], safeName(this.meta.title) + '.pdf', { type: 'application/pdf' });
+      if (file && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: this.meta.title });
+      else this.exportMenu(this.moreBtn);
+    } catch (e) { pd.close(); if (e.name !== 'AbortError') toast('Share failed: ' + e.message); }
   }
 
   toggleLock() {
@@ -2449,6 +2552,7 @@ export class Editor {
   setFinger(v) {
     settings.fingerDraw = v;
     saveSettings();
+    this.renderToolbar();
     toast(fingerDraws() ? 'Fingers draw · two fingers scroll' : 'Fingers scroll · Pencil draws');
   }
 
@@ -2508,15 +2612,28 @@ export class Editor {
   // First tap selects a tool and opens its style tray; tapping the active
   // tool again opens / closes the tray (like Notability).
   toolTap(t) {
-    if (this.tool === t) { this.trayOpen = !this.trayOpen; this.syncTray(); return; }
+    if (this.toolButtonId() === t) { this.trayOpen = !this.trayOpen; this.syncTray(); return; }
     this.trayOpen = true;
+    if (t === 'pen' || t === 'pencil') {
+      // Pen and Pencil are one tool; the button picks the style
+      const cfg = this.toolCfg('pen');
+      if (t === 'pencil') { if (cfg.style !== 'pencil') cfg.penStyle = cfg.style; cfg.style = 'pencil'; }
+      else if (cfg.style === 'pencil') cfg.style = cfg.penStyle && cfg.penStyle !== 'pencil' ? cfg.penStyle : 'fountain';
+      saveSettings();
+      if (this.tool === 'pen') { this.renderToolbar(); return; }
+      t = 'pen';
+    }
     this.setTool(t);
   }
+
+  // which toolbar button shows as selected
+  toolButtonId() { return this.tool === 'pen' && this.toolCfg('pen').style === 'pencil' ? 'pencil' : this.tool; }
 
   syncTray() {
     const empty = this.tool === 'hand';
     this.tray.hidden = !this.trayOpen || empty;
-    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('tray-open', id === this.tool && !this.tray.hidden);
+    const cur = this.toolButtonId();
+    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('tray-open', id === cur && !this.tray.hidden);
   }
 
   smallScreen() { return (this.vw || innerWidth) < 700; }
@@ -2533,7 +2650,7 @@ export class Editor {
 
   // second tap on a tool: its detailed options
   toolOptions(t) {
-    const anchor = this.toolBtns[t];
+    const anchor = this.toolBtns[t === 'pen' ? this.toolButtonId() : t];
     if (t === 'pen') {
       const cfg = this.toolCfg('pen');
       popover(anchor, h('div', { class: 'opt-pop' }, h('h4', {}, 'Pen style'),
@@ -2551,8 +2668,15 @@ export class Editor {
   }
 
   renderToolbar() {
-    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('on', id === this.tool);
-    this.toolboxBtn.classList.toggle('on', this.tool === 'tape' || this.tool === 'laser' || !!this.zoom || !!this.ruler);
+    const cur = this.toolButtonId();
+    for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('on', id === cur);
+    this.zoomBtn.classList.toggle('on', !!this.zoom);
+    this.rulerBtn.classList.toggle('on', !!this.ruler);
+    for (const b of this.fingerBtns) b.classList.toggle('on', fingerDraws());
+    // keep the page of the tools bar that holds the active tool in view
+    const pg = this.tool === 'laser' || this.tool === 'tape' ? 2 : this.tool === 'hand' ? this.tbPage : 1;
+    if (pg !== this.tbPage && this.lastToolShown !== this.tool) { this.tbPage = pg; this.toolsIsland.dataset.page = pg; }
+    this.lastToolShown = this.tool;
     this.renderPresets(this.presetsEl);
     this.syncTray();
     const O = this.optsEl;
@@ -2582,7 +2706,13 @@ export class Editor {
     if (t === 'pen' || t === 'hl') {
       swatches();
       O.append(h('div', { class: 'tb-sep sm' }));
-      sizes((sz) => { const d = Math.min(22, 3 + (t === 'hl' ? sz / 2 : sz * 2.4)); return h('span', { class: 'size-dot', style: { width: d + 'px', height: d + 'px', background: t === 'pen' ? inkColor(cfg.colors[cfg.color], this.curDark()) : cfg.colors[cfg.color], opacity: t === 'hl' ? 0.6 : 1 } }); });
+      sizes((sz) => {
+        const d = Math.min(22, 3 + (t === 'hl' ? sz / 2 : sz * 2.4));
+        const c = t === 'pen' ? inkColor(cfg.colors[cfg.color], this.curDark()) : cfg.colors[cfg.color];
+        // black / white ink would vanish on the tray: show it in the text colour
+        const neutral = /^#(1d1d1f|f4f4f6|000000|ffffff)$/i.test(c);
+        return h('span', { class: 'size-dot', style: { width: d + 'px', height: d + 'px', background: neutral ? 'var(--text)' : c, opacity: t === 'hl' ? 0.6 : 1 } });
+      });
       if (t === 'pen') O.append(h('button', { class: 'chip', onClick: () => this.toolOptions('pen') }, (PEN_STYLES.find((x) => x[0] === (cfg.style || 'fountain')) || PEN_STYLES[0])[1]));
       if (t === 'hl') O.append(h('button', { class: 'chip' + (cfg.straight ? ' on' : ''), title: 'Highlight in straight lines', onClick: () => { cfg.straight = !cfg.straight; saveSettings(); this.renderToolbar(); } }, 'Straight'));
       O.append(h('button', { class: 'size-btn', title: 'Eyedropper: pick a colour from the page', 'aria-label': 'Eyedropper', html: icons.dropper, onClick: () => this.startEyedropper() }));
@@ -2637,7 +2767,7 @@ export class Editor {
     if (mod && (k === '=' || k === '+')) { e.preventDefault(); this.zoomAt(this.vw / 2, this.vh / 2, this.cam.s * 1.2); return; }
     if (mod && k === '-') { e.preventDefault(); this.zoomAt(this.vw / 2, this.vh / 2, this.cam.s / 1.2); return; }
     if (mod && k === '0') { e.preventDefault(); this.fitWidth(false); return; }
-    if (mod && k === 's') { e.preventDefault(); this.save.flush(); toast('Saved'); return; }
+    if (mod && k === 's') { e.preventDefault(); this.save.flush(true); toast('Saved'); return; }
     if (mod && k === 'f') { e.preventDefault(); this.findPanel(); return; }
     if (mod) return;
     if ((k === 'delete' || k === 'backspace') && this.selection) { e.preventDefault(); if (!this.meta.locked) this.deleteSelection(); return; }
@@ -2669,7 +2799,7 @@ export class Editor {
     mr.start(1000);
     this.rec = { id: uid(), start: performance.now(), mr, stream, chunks, mime, transcript: [] };
     this.startTranscript();
-    this.recBtn.classList.add('recording');
+    this.el.classList.add('recording');
     this.recTimer = setInterval(() => { this.recTime.textContent = fmtTime((performance.now() - this.rec.start) / 1000); }, 250);
     this.recTime.textContent = '0:00';
     toast('Recording — your writing is synced to the audio');
@@ -2702,7 +2832,7 @@ export class Editor {
     this.rec = null;
     clearInterval(this.recTimer);
     if (r.sr) { try { r.sr.onend = null; r.sr.stop(); } catch {} }
-    this.recBtn.classList.remove('recording');
+    this.el.classList.remove('recording');
     this.recTime.textContent = '';
     await new Promise((res) => { r.mr.onstop = res; try { r.mr.stop(); } catch { res(); } });
     r.stream.getTracks().forEach((t) => t.stop());
@@ -2865,9 +2995,11 @@ export class Editor {
   changed() { this.dirty = true; this.save(); }
 
   // Saving never runs while the pen is on the glass (keeps writing smooth).
-  async persist() {
+  async persist(force = false) {
     if (this.pointers.size || this.live || this.erase || this.drag) { this.save(); return; }
     if (this.saving) { this.save(); return; }
+    // still writing (short pause between words): wait, saving a big note can stall the next stroke
+    if (performance.now() - (window.__inkInput || 0) < 1800 && !force) { this.save(); return; }
     this.saving = true;
     try {
       this.dirty = false;
@@ -2876,6 +3008,7 @@ export class Editor {
       if (performance.now() - this.lastThumb > 20000) {
         this.lastThumb = performance.now();
         await new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: 2000 }) : setTimeout(r, 200)));
+        if (!force && performance.now() - (window.__inkInput || 0) < 1800) { this.lastThumb = -Infinity; return; }
         this.meta.thumb = await makeThumb(this.body);
         await db.put('notes', this.meta);
       }
@@ -2889,7 +3022,7 @@ export class Editor {
   async flushSave() {
     if (!this.dirty || this.pointers.size || this.live || this.erase || this.drag) return;
     this.save.cancel();
-    await this.persist();
+    await this.persist(true);
   }
 
   isBusy() { return this.dirty || this.saving || this.pointers.size > 0 || !!this.textEdit || !!this.rec; }
@@ -2902,7 +3035,9 @@ export class Editor {
       : st.state === 'syncing' ? ['sync', 'Syncing…', 'busy']
       : st.state === 'synced' ? ['cloud', 'Synced', 'ok']
       : st.state === 'error' ? ['cloudOff', 'Sync paused · saved on this device', 'off'] : null;
+    this.syncStatus = st;
     P.hidden = !view;
+    if (this.moreBtn) { if (view) this.moreBtn.dataset.sync = view[2]; else delete this.moreBtn.dataset.sync; }
     if (!view) return;
     P.className = 'sync-pill ' + view[2];
     P.title = view[1];
@@ -2954,15 +3089,30 @@ export class Editor {
     if (this.rec) await this.stopRecord();
     this.stopPlayback(true);
     this.save.cancel();
-    this.lastThumb = 0;
+    this.lastThumb = -Infinity;
     this.pointers.clear();
     this.live = null;
-    await this.persist();
+    await this.persist(true);
     this.destroy();
     this.onExit();
   }
 
+  toggleCalculator() {
+    if (this.calc) { this.calc.close(); return; }
+    this.calc = new Calculator({
+      parent: this.stage,
+      onInsert: (text) => {
+        if (this.meta.locked) { toast('This note is locked'); return; }
+        this.insertTextBox(text, { x: Math.max(20, this.vw / 2 - 200), y: this.vh * 0.35 });
+        toast('Added to the page');
+      },
+      onClose: () => { this.calc = null; this.calcBtn.classList.remove('on'); },
+    });
+    this.calcBtn.classList.add('on');
+  }
+
   destroy() {
+    if (this.calc) this.calc.close();
     clearTimeout(this.remoteT);
     clearInterval(this.timerTick);
     if (activeEditor === this) activeEditor = null;
