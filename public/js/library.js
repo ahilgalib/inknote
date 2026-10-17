@@ -19,14 +19,6 @@ const fmtDay = (t) => { const d = new Date(t); return `${d.getDate()} ${d.toLoca
 const FOLDER_COLORS = ['#e5484d', '#f76b15', '#f5b400', '#30a46c', '#0090ff', '#6e56cf', '#d6409f', '#7c8088'];
 const REPO = 'https://github.com/ahilgalib/inknote';
 export const APP_VERSION = '2026.10.11 (9)';
-const QUOTES = [
-  ['It always seems impossible until it\'s done.', 'Nelson Mandela'],
-  ['The expert in anything was once a beginner.', 'Helen Hayes'],
-  ['Learning never exhausts the mind.', 'Leonardo da Vinci'],
-  ['Education is the passport to the future.', 'Malcolm X'],
-  ['Little by little, one travels far.', 'J. R. R. Tolkien'],
-  ['An investment in knowledge pays the best interest.', 'Benjamin Franklin'],
-];
 
 export class Library {
   constructor({ openNote }) {
@@ -150,7 +142,11 @@ export class Library {
     main.addEventListener('dragover', (e) => e.preventDefault());
     main.addEventListener('drop', (e) => { e.preventDefault(); this.importFiles([...e.dataTransfer.files]); });
     main.append(h('div', { class: 'side-scrim', onClick: () => this.el.classList.remove('side-open') }));
-    if (this.view === 'home') { main.append(this.topBar(menuBtn), this.renderHome()); return main; }
+    if (this.view === 'home') {
+      const home = this.renderHome();
+      main.append(this.topBar(menuBtn), h('div', { class: 'lib-title' }, h('h1', {}, this.homeTitle)), home);
+      return main;
+    }
 
     const folder = this.view.startsWith('folder:') ? this.folders.find((f) => 'folder:' + f.id === this.view) : null;
     const tabs = NOTE_TABS.includes(this.view);
@@ -202,30 +198,27 @@ export class Library {
   }
 
   renderHome() {
-    const [q, who] = QUOTES[new Date().getDate() % QUOTES.length];
-    const card = (icon, title, sub, onClick, cls = '') => h('button', { class: 'act-card ' + cls, onClick }, h('span', { class: 'act-ico', html: icons[icon] }), h('b', {}, title), h('small', {}, sub));
+    const hour = new Date().getHours();
+    const hello = hour < 5 ? 'Good night' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    const quick = (icon, label, onClick, cls = '') => h('button', { class: 'quick ' + cls, onClick }, h('span', { class: 'quick-ico', html: icons[icon] }), h('span', {}, label));
     const tplRow = h('div', { class: 'tpl-row' });
-    const recent = [...this.notes].sort((a, b) => (b.opened || b.updated) - (a.opened || a.updated)).slice(0, 12);
+    const recent = [...this.notes].sort((a, b) => (b.opened || b.updated) - (a.opened || a.updated)).slice(0, 8);
     const home = h('div', { class: 'home' },
-      h('div', { class: 'hero' },
-        h('img', { class: 'hero-logo', src: 'icons/icon.svg', alt: '' }),
-        h('h1', {}, 'What should we learn today?'),
-        h('p', { class: 'muted' }, `“${q}” — ${who}`)),
-      h('div', { class: 'actions' },
-        card('upload', 'Import or scan', 'PDF, images, notes, camera scan', (e) => this.importMenu(e.currentTarget)),
-        h('div', { class: 'act-card big' },
-          h('span', { class: 'act-ico mic', html: icons.mic }),
-          h('b', {}, 'Record & take notes'),
-          h('small', {}, 'Record a lecture or meeting while you write. Replay later and tap any handwriting to hear that moment.'),
-          h('button', { class: 'btn primary block', onClick: () => this.create({ record: true }) }, 'Start recording')),
-        card('pen', 'New note', 'Blank page — start writing', () => this.create())),
+      h('div', { class: 'quick-row' },
+        quick('plus', 'New note', () => this.create(), 'primary'),
+        quick('nTemplate', 'Templates', () => this.fromTemplate()),
+        quick('upload', 'Import or scan', (e) => this.importMenu(e.currentTarget)),
+        quick('nMic', 'Record lecture', () => this.create({ record: true }))),
       h('section', { class: 'home-sec' },
-        h('div', { class: 'sec-head' }, h('h2', {}, 'Start with a template'), h('div', { class: 'grow' }),
-          h('button', { class: 'link-btn', onClick: () => this.fromTemplate() }, 'See more ›')),
-        tplRow),
-      recent.length ? h('section', { class: 'home-sec' },
-        h('div', { class: 'sec-head' }, h('h2', {}, 'Recent notes'), h('div', { class: 'grow' }), h('button', { class: 'link-btn', onClick: () => this.go('all') }, 'All notes ›')),
-        h('div', { class: 'grid' }, recent.map((n) => this.noteCard(n)))) : null);
+        h('div', { class: 'sec-head' }, h('h2', {}, 'Recent'), h('div', { class: 'grow' }),
+          recent.length ? h('button', { class: 'link-btn', onClick: () => this.go('all') }, 'All notes ›') : null),
+        recent.length ? h('div', { class: 'grid' }, recent.map((n) => this.noteCard(n)))
+          : h('button', { class: 'home-empty', onClick: () => this.create() }, h('span', { html: icons.nPen }), h('b', {}, 'Your notes will appear here'), h('small', {}, 'Tap to start your first note'))),
+      h('section', { class: 'home-sec' },
+        h('div', { class: 'sec-head' }, h('h2', {}, 'Templates'), h('div', { class: 'grow' }),
+          h('button', { class: 'link-btn', onClick: () => this.fromTemplate() }, 'See all ›')),
+        tplRow));
+    this.homeTitle = hello;
     // template previews render progressively so the home screen appears instantly
     const ids = ['assignment', 'dailyGoals', 'plannerDark', 'flashcard', 'weekly', 'lecture', 'cornell'];
     let i = 0;

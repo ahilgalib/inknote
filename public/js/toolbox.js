@@ -626,19 +626,19 @@ export const toolboxMethods = {
 
   // -------------------------------------------------------------- tips ----
 
+  // Shown once, the first time a note is opened (and from More › Quick tips).
   showTips(anchor) {
+    settings.tipsSeen = true;
+    saveSettings();
     const tips = [
-      ['pen', 'Tap a tool twice for its options: pen styles (fountain, ballpoint, calligraphy, pencil, dashed, dotted), eraser modes…'],
-      ['star', 'Save pens you love with ★ — they stay in the toolbar.'],
-      ['toolbox', 'Toolbox: Zoom window, Tape, Ruler, Laser, Stickers, Sticky notes, Find, Eyedropper.'],
-      ['image', 'Tap a picture for options (sticker, crop, rotate, flip). Drag to move, corners to resize.'],
-      ['lasso', 'Lasso anything to move, resize, rotate, recolour or copy it — even to another page.'],
-      ['moon', 'Moon button: dark pages. Black ink turns white automatically.'],
+      ['nPen', 'Tap a tool again for its colours and sizes. Tap the style name for fountain, ballpoint, calligraphy and more.'],
+      ['nRight', 'More tools are one tap away: zoom window, laser, tape, ruler, sticky note and toolbox.'],
+      ['nCalc', 'The calculator is in the top bar. Add any answer to your page.'],
+      ['nSelect', 'Lasso to move, resize, rotate, recolour or copy anything.'],
       ['hand', 'Two-finger tap = undo · three-finger tap = redo · pinch = zoom.'],
-      ['cloud', 'Works offline. Sign in to sync with all your devices.'],
     ];
-    popover(anchor || this.optsEl, h('div', { class: 'tips-pop' }, h('h4', {}, 'Quick tips'),
+    popover(anchor || this.moreBtn, h('div', { class: 'tips-pop' }, h('h4', {}, 'Quick tips'),
       tips.map(([ic, t]) => h('div', { class: 'tip' }, h('span', { html: icons[ic] }), h('p', {}, t))),
-      h('button', { class: 'btn primary block', onClick: () => { closePopover(); settings.tipsSeen = true; saveSettings(); } }, 'Got it')), { className: 'wide' });
+      h('button', { class: 'btn primary block', onClick: () => closePopover() }, 'Got it')), { className: 'wide' });
   },
 };

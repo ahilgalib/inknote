@@ -105,7 +105,7 @@ export class Editor {
         tbtn('nRight', 'More tools', page(2), 'chev')),
       h('div', { class: 'tb-page p2' }, fingerBtn(), this.zoomBtn,
         toolBtn(['laser', 'Laser pointer', 'K', 'nLaser']), toolBtn(['tape', 'Tape', 'Y', 'nTape']), this.rulerBtn,
-        this.calcBtn, recBtn(), tbtn('nComment', 'Sticky note', () => this.addSticky()), this.toolboxBtn,
+        recBtn(), tbtn('nComment', 'Sticky note', () => this.addSticky()), this.toolboxBtn,
         tbtn('nLeft', 'Back to writing tools', page(1), 'chev')));
     this.toolsIsland.dataset.page = 1;
 
@@ -117,6 +117,7 @@ export class Editor {
       island('back', tbtn('nBack', 'Back to library', () => this.exit())),
       this.toolsIsland,
       island('actions', this.undoBtn, this.redoBtn,
+        this.calcBtn,
         tbtn('nShare', 'Share & export', (e) => this.exportMenu(e.currentTarget)),
         this.moreBtn,
         tbtn('nPaper', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
@@ -230,7 +231,7 @@ export class Editor {
     parent.append(this.el);
     this.resize();
     this.lockBtn.hidden = !this.meta.locked;
-    if (!settings.tipsSeen) setTimeout(() => { if (this.el.isConnected) this.showTips(this.toolboxBtn); }, 700);
+    if (!settings.tipsSeen) setTimeout(() => { if (this.el.isConnected) this.showTips(this.moreBtn); }, 700);
   }
 
   resize() {
@@ -2701,7 +2702,13 @@ export class Editor {
     if (t === 'pen' || t === 'hl') {
       swatches();
       O.append(h('div', { class: 'tb-sep sm' }));
-      sizes((sz) => { const d = Math.min(22, 3 + (t === 'hl' ? sz / 2 : sz * 2.4)); return h('span', { class: 'size-dot', style: { width: d + 'px', height: d + 'px', background: t === 'pen' ? inkColor(cfg.colors[cfg.color], this.curDark()) : cfg.colors[cfg.color], opacity: t === 'hl' ? 0.6 : 1 } }); });
+      sizes((sz) => {
+        const d = Math.min(22, 3 + (t === 'hl' ? sz / 2 : sz * 2.4));
+        const c = t === 'pen' ? inkColor(cfg.colors[cfg.color], this.curDark()) : cfg.colors[cfg.color];
+        // black / white ink would vanish on the tray: show it in the text colour
+        const neutral = /^#(1d1d1f|f4f4f6|000000|ffffff)$/i.test(c);
+        return h('span', { class: 'size-dot', style: { width: d + 'px', height: d + 'px', background: neutral ? 'var(--text)' : c, opacity: t === 'hl' ? 0.6 : 1 } });
+      });
       if (t === 'pen') O.append(h('button', { class: 'chip', onClick: () => this.toolOptions('pen') }, (PEN_STYLES.find((x) => x[0] === (cfg.style || 'fountain')) || PEN_STYLES[0])[1]));
       if (t === 'hl') O.append(h('button', { class: 'chip' + (cfg.straight ? ' on' : ''), title: 'Highlight in straight lines', onClick: () => { cfg.straight = !cfg.straight; saveSettings(); this.renderToolbar(); } }, 'Straight'));
       O.append(h('button', { class: 'size-btn', title: 'Eyedropper: pick a colour from the page', 'aria-label': 'Eyedropper', html: icons.dropper, onClick: () => this.startEyedropper() }));

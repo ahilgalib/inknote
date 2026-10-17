@@ -760,3 +760,30 @@ button.act-card:hover { border-color: var(--accent); }
 .calc.is-sci .calc-keys.basic .ck { height: 40px; border-radius: 12px; }
 .calc.is-sci .calc-hist { height: 383px; }
 .calc.is-sci .calc-expr { height: 40px; }
+/* home: simple quick actions, recent notes, templates */
+.library .home { max-width: none; }
+.quick-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.quick { display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 16px; border-radius: 16px; background: var(--chrome); border: 1px solid var(--island-line); font-size: 15.5px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; }
+.quick:hover { border-color: var(--icon); }
+.quick:active { transform: scale(.98); }
+.quick-ico { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: var(--island); color: var(--icon); flex: none; }
+.quick-ico svg { width: 20px; height: 20px; }
+.quick.primary { background: #4c9ff5; border-color: #4c9ff5; color: #08162b; }
+.quick.primary .quick-ico { background: rgba(255,255,255,.35); color: #08162b; }
+.library .home-sec { margin-top: 30px; }
+.library .sec-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.library .link-btn { font-weight: 600; color: #4c9ff5; }
+.home-empty { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 34px 16px; border: 1.5px dashed var(--island-line); border-radius: 16px; color: var(--text); }
+.home-empty span { color: var(--muted); }
+.home-empty span svg { width: 30px; height: 30px; }
+.home-empty small { color: var(--muted); font-size: 13.5px; }
+@media (max-width: 900px) { .quick-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .quick { height: 54px; font-size: 14.5px; padding: 0 12px; gap: 10px; } }
+/* cleaner pop-ups: same surface as the toolbar islands */
+.popover { background: var(--island); border-color: var(--island-line); border-radius: 18px; }
+.menu { min-width: 220px; }
+.menu-item { height: 44px; border-radius: 10px; font-size: 15px; }
+.menu-item:hover { background: rgba(127,131,140,.13); }
+.menu-item .mi-icon { color: var(--icon); }
+.menu-sep { background: var(--island-line); }
+.paper-pop > .row { flex-wrap: wrap; gap: 8px; }
