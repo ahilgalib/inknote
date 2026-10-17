@@ -17,6 +17,8 @@ Works offline, installs to your home screen, and syncs automatically across all 
 - Shapes can be filled; page bookmarks; go to page; lock a note (read only)
 - **Notability-style layout**: centred tools with a floating style tray
 - **Side by side (multi-note)**: open two notes next to each other, copy & paste between them
+- **Quick notes** (typed, like Google Keep): checklists, bullets, numbered lists; every line works out its maths (`120+80` → 200, `Rice 2 x 60 =` → 120), lists of prices get a **total** (Bangla digits and ৳ / tk / টাকা understood), suggestions above the keyboard
+- **Google Drive**: save any note to Drive (quick notes as Google Docs, handwritten notes as PDF) and back up / restore all notes
 - **Calculator** (basic & scientific): live answer while you type, history, copy, add the result to the page
 - **Study timer** (focus / break sessions) and **Tape quiz** (reveal covered answers one by one)
 - Palm rejection: once a Pencil is used, fingers only scroll and zoom (Auto / On / Off)
@@ -78,6 +80,11 @@ Open http://localhost:8801.
 Or let GitHub deploy for you: add the repository secrets `CLOUDFLARE_API_TOKEN` (a token with *Account → Cloudflare Pages → Edit*) and `CLOUDFLARE_ACCOUNT_ID`; every push to `main` then deploys automatically (`.github/workflows/deploy.yml`).
 
 Without the `functions/` API the app still works fully offline (no sync).
+
+### Google Drive (optional)
+Uses the same OAuth client as *Sign in with Google* below. In Google Cloud Console for that project:
+enable the **Google Drive API**, and on the OAuth consent screen add the scope `.../auth/drive.file`
+(Inknote can only see the files it creates, in an “Inknote” folder).
 
 ### Sign in with Google (optional)
 1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials) create an **OAuth client ID** of type *Web application* and add your site (e.g. `https://inknote.pages.dev`) to **Authorized JavaScript origins**.

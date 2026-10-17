@@ -77,11 +77,13 @@ export function defaultTitle() {
   return `Note ${d.getDate()} ${d.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3)}, ${d.getFullYear()}`;
 }
 
-export async function createNote({ title, subjectId = null, pages } = {}) {
+export async function createNote({ title, subjectId = null, pages, kind } = {}) {
   const id = uid();
   const now = Date.now();
   const meta = { id, title: title || defaultTitle(), subjectId, created: now, updated: now, bodyRev: now, opened: now, thumb: null, pageCount: 1, text: '' };
-  const body = { id, pages: pages || [newPage()], recordings: [], zc: 0 };
+  // quick note: typed text only (like Google Keep), no pages
+  const body = kind === 'quick' ? { id, pages: [], recordings: [], zc: 0, quick: { text: '' } } : { id, pages: pages || [newPage()], recordings: [], zc: 0 };
+  if (kind) meta.kind = kind;
   meta.pageCount = body.pages.length;
   await db.put('bodies', body);
   await db.put('notes', meta);
@@ -93,7 +95,8 @@ export async function saveNote(meta, body) {
   meta.updated = Date.now();
   meta.bodyRev = meta.updated;
   meta.pageCount = body.pages.length;
-  meta.text = body.pages.flatMap((p) => p.items.filter((i) => i.type === 'text').map((i) => i.text)).join(' ').slice(0, 4000);
+  meta.text = (meta.kind === 'quick' ? (body.quick && body.quick.text) || ''
+    : body.pages.flatMap((p) => p.items.filter((i) => i.type === 'text').map((i) => i.text)).join(' ')).slice(0, 4000);
   await db.put('bodies', body);
   await db.put('notes', meta);
   localChanged();
@@ -254,6 +257,11 @@ export async function exportNoteFile(meta) {
 }
 
 export async function exportBackup() {
+  const stamp = new Date().toISOString().slice(0, 10);
+  await saveFile(await buildBackup(), `inknote-backup-${stamp}.json`);
+}
+
+export async function buildBackup() {
   const metas = await db.all('notes');
   const subjects = await db.all('subjects');
   const notes = [];
@@ -265,8 +273,7 @@ export async function exportBackup() {
     notes.push({ meta: m, body });
   }
   const data = { format: 'inknote-backup', version: 1, created: Date.now(), subjects, notes, assets: await packAssets(ids) };
-  const stamp = new Date().toISOString().slice(0, 10);
-  await saveFile(new Blob([JSON.stringify(data)], { type: 'application/json' }), `inknote-backup-${stamp}.json`);
+  return new Blob([JSON.stringify(data)], { type: 'application/json' });
 }
 
 // Import a note file or a full backup (also accepts files from the old "Inkwell" name).

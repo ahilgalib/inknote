@@ -1,11 +1,11 @@
 // Offline support: the whole app (incl. pdf.js) is cached, Google Fonts are
 // cached the first time they are used. The sync API is never cached.
-const VERSION = 'inknote-v15';
+const VERSION = 'inknote-v16';
 const FONTS = 'inknote-fonts';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
-  'js/app.js', 'js/calc-engine.js', 'js/calculator.js', 'js/db.js', 'js/editor.js', 'js/fontpicker.js', 'js/fonts.js', 'js/gallery.js', 'js/gfonts-list.js',
+  'js/app.js', 'js/calc-engine.js', 'js/calculator.js', 'js/db.js', 'js/drive.js', 'js/quickcalc.js', 'js/quicknote.js', 'js/editor.js', 'js/fontpicker.js', 'js/fonts.js', 'js/gallery.js', 'js/gfonts-list.js',
   'js/icons.js', 'js/ink.js', 'js/library.js', 'js/notes.js', 'js/pdf.js', 'js/render.js', 'js/settings.js',
   'js/shapes.js', 'js/sync.js', 'js/templates.js', 'js/toolbox.js', 'js/ui.js', 'js/util.js',
   'vendor/pdfjs/pdf.min.js', 'vendor/pdfjs/pdf.worker.min.js',

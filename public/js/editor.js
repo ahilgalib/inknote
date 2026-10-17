@@ -17,6 +17,7 @@ import { fontStack, loadFont } from './fonts.js';
 import { fontPicker } from './fontpicker.js';
 import { templateGallery } from './gallery.js';
 import { Calculator } from './calculator.js';
+import { saveToDrive } from './drive.js';
 
 const GAP = 30;          // space between pages (doc px)
 const TOP = 20;          // space above first page (screen px)
@@ -145,7 +146,7 @@ export class Editor {
     this.main = h('canvas', { class: 'cv-main' });
     this.liveCv = h('canvas', { class: 'cv-live' });
     this.mctx = this.main.getContext('2d');
-    this.lctx = this.liveCv.getContext('2d', { desynchronized: true });
+    this.lctx = this.liveCv.getContext('2d');
     this.textarea = h('textarea', { class: 'text-edit', hidden: true, spellcheck: 'true', autocapitalize: 'sentences' });
     this.textarea.addEventListener('input', () => this.sizeTextarea());
     // keep editing while the format bar or one of its pop-ups is being used
@@ -191,6 +192,16 @@ export class Editor {
     cv.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
     cv.addEventListener('dblclick', (e) => e.preventDefault());
     this.stage.addEventListener('dragover', (e) => { e.preventDefault(); });
+    // Android / iOS scroll the page to a focused text box when the keyboard opens;
+    // that shifts the whole note. Undo it and move the camera instead.
+    const unscroll = (el) => el.addEventListener('scroll', () => { if (el.scrollTop || el.scrollLeft) { el.scrollTop = 0; el.scrollLeft = 0; } });
+    unscroll(this.stage);
+    this.onViewport = () => {
+      for (const el of [document.documentElement, document.body]) if (el.scrollTop) el.scrollTop = 0;
+      if (window.scrollY) window.scrollTo(0, 0);
+      this.keepTextVisible();
+    };
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', this.onViewport);
     this.stage.addEventListener('drop', (e) => this.onDrop(e));
 
     this.onKey = (e) => this.handleKey(e);
@@ -1809,7 +1820,8 @@ export class Editor {
 
   newTextItem(o, lx, ly, text) {
     const cfg = this.toolCfg('text');
-    const size = cfg.sizes[cfg.size];
+    // zoomed out (phones): new text is never smaller than ~16px on screen
+    const size = Math.max(cfg.sizes[cfg.size], Math.round(16 / (this.cam.s || 1)));
     const x = clamp(lx, 8, o.page.w - 60);
     return {
       id: uid(), type: 'text', x, y: Math.max(4, ly - size * 0.65),
@@ -2450,7 +2462,8 @@ export class Editor {
       card(
         row('Share settings', 'nPersonAdd', () => this.shareNote()),
         row('Quick export', 'nExport', () => this.exportPDF(), { sub: 'PDF, All Pages' }),
-        row('Export as…', 'nExportAs', () => this.exportMenu(anchor))),
+        row('Export as…', 'nExportAs', () => this.exportMenu(anchor)),
+        row('Save to Google Drive', 'nDrive', () => { this.commitText(); this.save.flush(true); saveToDrive(this.meta, this.body); }, { sub: 'PDF in the Inknote folder' })),
       card(
         row('Comments', 'nComment', () => this.addSticky()),
         row('Start study session', 'nStopwatch', () => this.timerMenu(anchor))),
@@ -3111,7 +3124,22 @@ export class Editor {
     this.calcBtn.classList.add('on');
   }
 
+  // keep the text box being typed in above the on-screen keyboard
+  keepTextVisible() {
+    if (!this.textEdit || !this.rect) return;
+    const vv = window.visualViewport;
+    const visibleBottom = (vv ? vv.height + vv.offsetTop : innerHeight) - this.rect.top - 12;
+    const r = this.textarea.getBoundingClientRect();
+    const bottom = r.bottom - this.rect.top;
+    if (bottom > visibleBottom && visibleBottom > 80) {
+      this.cam.y -= Math.min(bottom - visibleBottom + 24, bottom - 60);
+      this.clampCam();
+      this.requestRender();
+    }
+  }
+
   destroy() {
+    if (window.visualViewport && this.onViewport) window.visualViewport.removeEventListener('resize', this.onViewport);
     if (this.calc) this.calc.close();
     clearTimeout(this.remoteT);
     clearInterval(this.timerTick);

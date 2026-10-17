@@ -115,3 +115,15 @@ export function safeName(s) {
 }
 
 export const isApple = /iPad|iPhone|Macintosh/.test(navigator.userAgent);
+
+// Load an external script once.
+export function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const sc = document.createElement('script');
+    sc.src = src; sc.async = true;
+    sc.onload = () => resolve();
+    sc.onerror = () => { sc.remove(); reject(new Error('offline')); };
+    document.head.append(sc);
+  });
+}

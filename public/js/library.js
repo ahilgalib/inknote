@@ -1,6 +1,6 @@
 // Library: Notability-style sidebar (notes, folders, recently deleted) and a
 // home screen with quick actions, templates and recent notes.
-import { h, uid, timeAgo, toast, pickFile } from './util.js';
+import { h, uid, timeAgo, toast, pickFile, loadScript } from './util.js';
 import { icons } from './icons.js';
 import { db } from './db.js';
 import { settings, saveSettings, applyTheme } from './settings.js';
@@ -11,6 +11,7 @@ import {
 import { menu, popover, promptDialog, confirmDialog, progressDialog, closePopover, sheet } from './ui.js';
 import { SIZES } from './templates.js';
 import { templateGallery, templateCard } from './gallery.js';
+import { saveToDrive, backupToDrive, restoreFromDrive, driveInfo } from './drive.js';
 import { account, onStatus, signIn, signUp, signOut, updateName, deleteAccount, syncNow, getStatus, signInGoogle, serverConfig } from './sync.js';
 
 const NOTE_TABS = ['all', 'recent', 'fav', 'unfiled'];
@@ -193,6 +194,8 @@ export class Library {
       { label: 'Sort…', icon: 'menu', onClick: () => this.sortMenu(anchor) },
       '-',
       { label: 'Import…', icon: 'download', onClick: () => this.importMenu(anchor) },
+      { label: 'Back up to Google Drive', icon: 'nDrive', onClick: () => backupToDrive() },
+      { label: 'Restore from Google Drive…', icon: 'restore', onClick: () => restoreFromDrive(anchor, () => this.refresh()) },
       { label: 'Settings', icon: 'settings', onClick: () => this.settingsSheet() },
     ]);
   }
@@ -206,7 +209,7 @@ export class Library {
     const home = h('div', { class: 'home' },
       h('div', { class: 'quick-row' },
         quick('plus', 'New note', () => this.create(), 'primary'),
-        quick('nTemplate', 'Templates', () => this.fromTemplate()),
+        quick('nQuick', 'Quick note', () => this.create({ kind: 'quick' })),
         quick('upload', 'Import or scan', (e) => this.importMenu(e.currentTarget)),
         quick('nMic', 'Record lecture', () => this.create({ record: true }))),
       h('section', { class: 'home-sec' },
@@ -297,7 +300,9 @@ export class Library {
     const card = h('div', { class: 'card' + (this.picked.has(n.id) ? ' picked' : '') },
       h('button', { class: 'card-open', onClick: open, 'aria-label': 'Open ' + n.title },
         this.selecting ? h('span', { class: 'pick-mark', html: icons.check }) : null,
-        h('div', { class: 'thumb' }, n.thumb ? h('img', { src: n.thumb, alt: '', loading: 'lazy' }) : h('div', { class: 'thumb-blank' }))),
+        n.kind === 'quick'
+          ? h('div', { class: 'thumb thumb-text' }, (n.text || '').split('\n').slice(0, 12).map((l) => h('div', { class: /^\s*☑ /.test(l) ? 'done' : '' }, l || '\u00a0')))
+          : h('div', { class: 'thumb' }, n.thumb ? h('img', { src: n.thumb, alt: '', loading: 'lazy' }) : h('div', { class: 'thumb-blank' }))),
       h('div', { class: 'card-meta' },
         h('div', { class: 'card-text' },
           h('div', { class: 'card-title' }, n.starred ? h('span', { class: 'star', html: icons.starOn }) : null, n.locked ? h('span', { class: 'star', html: icons.lock }) : null, n.title),
@@ -317,8 +322,8 @@ export class Library {
 
   currentFolderId() { return this.view.startsWith('folder:') ? this.view.slice(7) : null; }
 
-  async create({ record = false, pages } = {}) {
-    const meta = await createNote({ subjectId: this.currentFolderId(), title: defaultTitle(), pages });
+  async create({ record = false, pages, kind } = {}) {
+    const meta = await createNote({ subjectId: this.currentFolderId(), title: kind === 'quick' ? 'Quick note' : defaultTitle(), pages, kind });
     if (record) sessionStorage.setItem('inknote.autorec', meta.id);
     this.openNote(meta.id);
   }
@@ -337,6 +342,7 @@ export class Library {
   newMenu(anchor) {
     menu(anchor, [
       { label: 'New note', icon: 'pen', onClick: () => this.create() },
+      { label: 'Quick note (typed, lists & totals)', icon: 'nQuick', onClick: () => this.create({ kind: 'quick' }) },
       { label: 'New note from template…', icon: 'template', onClick: () => this.fromTemplate() },
       { label: 'New note & start recording', icon: 'mic', onClick: () => this.create({ record: true }) },
       '-',
@@ -432,7 +438,8 @@ export class Library {
       { label: n.starred ? 'Remove from Favorites' : 'Add to Favorites', icon: 'star', onClick: async () => { n.starred = !n.starred || undefined; if (!n.starred) delete n.starred; await touchMeta(n); this.render(); } },
       { label: 'Move to folder…', icon: 'folder', onClick: () => this.moveMenu(anchor, n) },
       { label: 'Duplicate', icon: 'duplicate', onClick: async () => { await duplicateNote(n); this.refresh(); } },
-      { label: 'Export PDF', icon: 'pdf', onClick: async () => {
+      { label: 'Save to Google Drive', icon: 'nDrive', onClick: () => { db.get('bodies', n.id).then((b) => b && saveToDrive(n, b)); } },
+      n.kind === 'quick' ? null : { label: 'Export PDF', icon: 'pdf', onClick: async () => {
         const body = await db.get('bodies', n.id);
         const pd = progressDialog('Exporting PDF…');
         try { await exportNotePDF(n, body, (f) => pd.set(f)); } catch (e) { toast(e.message); }
@@ -652,6 +659,11 @@ export class Library {
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn', onClick: () => exportBackup() }, h('span', { html: icons.download }), 'Export backup'),
         h('button', { class: 'btn', onClick: () => this.importNote() }, h('span', { html: icons.upload }), 'Import backup')),
+      h('h4', {}, 'Google Drive'),
+      h('p', { class: 'muted small' }, driveInfo().lastBackup ? 'Last backup: ' + new Date(driveInfo().lastBackup).toLocaleString() : 'Keep a copy of all your notes in your Google Drive (folder “Inknote”).'),
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn', onClick: () => backupToDrive() }, h('span', { html: icons.nDrive }), 'Back up now'),
+        h('button', { class: 'btn', onClick: (e) => restoreFromDrive(e.currentTarget, () => this.refresh()) }, h('span', { html: icons.restore }), 'Restore')),
       h('h4', {}, 'Storage'), (() => {
         const p = h('p', { class: 'muted small' }, 'Checking…');
         if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then((e) => { p.textContent = `Using ${(e.usage / 1048576).toFixed(1)} MB on this device.`; });
@@ -672,13 +684,3 @@ export class Library {
   }
 }
 
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
-    const sc = document.createElement('script');
-    sc.src = src; sc.async = true;
-    sc.onload = () => resolve();
-    sc.onerror = () => { sc.remove(); reject(new Error('offline')); };
-    document.head.append(sc);
-  });
-}
