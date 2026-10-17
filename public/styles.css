@@ -787,3 +787,23 @@ button.act-card:hover { border-color: var(--accent); }
 .menu-item .mi-icon { color: var(--icon); }
 .menu-sep { background: var(--island-line); }
 .paper-pop > .row { flex-wrap: wrap; gap: 8px; }
+/* title lives inside the header grid */
+.ed-top { row-gap: 6px; border-bottom: 1px solid var(--chrome-line); }
+.ed-top > .ed-title { grid-column: 1 / -1; grid-row: 2; padding: 0 8px 4px; background: none; border: 0; min-width: 0; }
+@media (max-width: 760px) {
+  .ed-top { grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 6px; padding: calc(6px + var(--safe-t)) calc(8px + var(--safe-r)) 8px calc(8px + var(--safe-l)); }
+  .ed-top > .back { grid-column: 1; grid-row: 1; }
+  .ed-top > .ed-title { grid-column: 2; grid-row: 1; padding: 0; gap: 4px; }
+  .ed-top > .actions { grid-column: 3; grid-row: 1; }
+  .ed-top > .tools { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
+  .ed-top > .tools .tb-page { flex: 1; justify-content: space-between; }
+  .ed-top .wide-only { display: none; }
+  .tb-island { height: 42px; border-radius: 15px; }
+  .tb-island.back { width: 42px; }
+  .ed-top .tool-btn { width: 34px; height: 38px; }
+  .ed-top > .actions .tool-btn { width: 36px; }
+  .ed-title .title-input, .ed-top > .ed-title .title-input { font-size: 18px; letter-spacing: -.01em; padding: 4px 6px; }
+  .ed-title .timer-btn { height: 30px; }
+  .rec-time { height: 26px; padding: 0 8px; font-size: 12px; }
+}
+@media (max-width: 360px) { .ed-top .tool-btn { width: 30px; } .ed-top > .actions .tool-btn { width: 32px; } }

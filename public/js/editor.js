@@ -118,10 +118,11 @@ export class Editor {
       this.toolsIsland,
       island('actions', this.undoBtn, this.redoBtn,
         this.calcBtn,
-        tbtn('nShare', 'Share & export', (e) => this.exportMenu(e.currentTarget)),
+        // on phones these three live in the More panel to keep the bar short
+        tbtn('nShare', 'Share & export', (e) => this.exportMenu(e.currentTarget), 'wide-only'),
         this.moreBtn,
-        tbtn('nPaper', 'Paper & templates', (e) => this.paperMenu(e.currentTarget)),
-        tbtn('nPages', 'Page thumbnails', () => this.togglePagesPanel())));
+        tbtn('nPaper', 'Paper & templates', (e) => this.paperMenu(e.currentTarget), 'wide-only'),
+        tbtn('nPages', 'Page thumbnails', () => this.togglePagesPanel(), 'wide-only')));
 
     this.titleInput = h('input', { class: 'title-input', value: this.meta.title, spellcheck: 'false', 'aria-label': 'Note title' });
     this.titleInput.addEventListener('input', () => { this.meta.title = this.titleInput.value || 'Untitled note'; this.changed(); });
@@ -133,6 +134,8 @@ export class Editor {
       this.timerBtn = h('button', { class: 'icon-btn timer-btn', title: 'Study timer', 'aria-label': 'Study timer', html: icons.timer, onClick: (e) => this.timerMenu(e.currentTarget) }),
       this.syncPill = h('span', { class: 'sync-pill', hidden: true }),
       this.lockBtn = btn('lock', 'Locked — tap to edit', () => this.toggleLock(), 'lock-btn'));
+    // the title sits under the toolbar on tablets, between back and the actions on phones
+    topbar.append(titlebar);
 
     this.presetsEl = h('div', { class: 'tb-group presets' });
     this.optsEl = h('div', { class: 'tb-group opts' });
@@ -172,7 +175,7 @@ export class Editor {
     this.audioBar = h('div', { class: 'audio-bar', hidden: true });
     this.pagesPanel = h('aside', { class: 'pages-panel', hidden: true });
 
-    this.el = h('div', { class: 'editor' }, topbar, titlebar,
+    this.el = h('div', { class: 'editor' }, topbar,
       h('div', { class: 'ed-body' }, this.pagesPanel, this.stage, this.tray), this.audioBar);
 
     const cv = this.liveCv;
@@ -2453,6 +2456,7 @@ export class Editor {
         row('Start study session', 'nStopwatch', () => this.timerMenu(anchor))),
       card(
         row('Template settings', 'nTemplate', () => this.paperMenu(anchor)),
+        row('Page thumbnails', 'nPages', () => this.togglePagesPanel()),
         row('View settings', '', () => this.viewMenu(anchor), { chev: true })),
       card(row(this.meta.title, '', () => this.noteMenu(anchor), { sub: synced, chev: true })),
       card(this.inSplit()
