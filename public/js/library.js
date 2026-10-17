@@ -87,7 +87,7 @@ export class Library {
     const nav = (icon, label, on, onClick, count) => h('button', { class: 'nav-item' + (on ? ' on' : ''), onClick },
       h('span', { class: 'nav-ico', html: icons[icon] }), h('span', { class: 'label' }, label), count != null ? h('span', { class: 'count' }, String(count)) : null);
     const folderRows = this.folders.map((f) => h('button', {
-      class: 'nav-item folder' + (this.view === 'folder:' + f.id ? ' on' : ''), onClick: () => this.go('folder:' + f.id),
+      class: 'nav-item folder' + (this.view === 'folder:' + f.id ? ' on' : ''), onClick: () => this.go('folder:' + f.id), 'data-folder': f.id,
       onContextmenu: (e) => { e.preventDefault(); this.folderMenu(e.currentTarget, f); },
     }, h('span', { class: 'fdot', style: { background: f.color } }), h('span', { class: 'label' }, f.name),
     h('span', { class: 'side-more', html: icons.more, onClick: (e) => { e.stopPropagation(); this.folderMenu(e.currentTarget, f); } })));
@@ -156,7 +156,9 @@ export class Library {
       ? (this.trash.length ? h('button', { class: 'btn', onClick: () => this.emptyTrash() }, 'Empty') : null)
       : this.selecting ? h('button', { class: 'btn primary', onClick: () => { this.selecting = false; this.picked.clear(); this.renderMainOnly(); } }, 'Done') : null),
     h('div', { class: 'lib-title' },
-      h('h1', {}, folder ? h('span', { class: 'fdot big', style: { background: folder.color } }) : null, title),
+      folder ? h('button', { class: 'crumb', 'data-drop-out': '1', onClick: () => this.go('all') }, h('span', { html: icons.nLeft }), 'All Notes') : null,
+      h('h1', {}, folder ? h('span', { class: 'fdot big', style: { background: folder.color } }) : null, title,
+        folder ? h('button', { class: 'icon-btn title-more', 'aria-label': 'Folder options', html: icons.more, onClick: (e) => this.folderMenu(e.currentTarget, folder) }) : null),
       tabs ? h('div', { class: 'tabs', role: 'tablist' }, [['all', 'All Notes'], ['recent', 'Recents'], ['fav', 'Favorites'], ['unfiled', 'Unfiled']].map(([v, l]) =>
         h('button', { class: 'tab' + (this.view === v ? ' on' : ''), role: 'tab', onClick: () => this.go(v) }, l))) : null));
     if (this.view === 'trash') main.append(h('p', { class: 'muted pad-x' }, 'Notes stay here for 30 days, then they are deleted for good.'));
@@ -240,7 +242,8 @@ export class Library {
     let list = this.view === 'trash' ? this.trash : this.notes;
     if (this.view.startsWith('folder:')) list = list.filter((n) => 'folder:' + n.subjectId === this.view);
     if (this.view === 'fav') list = list.filter((n) => n.starred);
-    if (this.view === 'unfiled') list = list.filter((n) => !n.subjectId || !this.folders.some((f) => f.id === n.subjectId));
+    // All Notes shows folders as stacks (like Procreate) and the loose notes next to them
+    if (this.view === 'unfiled' || this.showStacks()) list = list.filter((n) => !n.subjectId || !this.folders.some((f) => f.id === n.subjectId));
     if (this.view === 'recent') list = [...list].filter((n) => n.opened).sort((a, b) => b.opened - a.opened).slice(0, 30);
     if (q) list = list.filter((n) => (n.title + ' ' + (n.text || '')).toLowerCase().includes(q));
     const sort = settings.sort;
@@ -248,12 +251,16 @@ export class Library {
     return [...list].sort((a, b) => this.view === 'trash' ? b.trashed - a.trashed : sort === 'title' ? a.title.localeCompare(b.title) : sort === 'created' ? b.created - a.created : b.updated - a.updated);
   }
 
+  showStacks() { return this.view === 'all' && !this.query.trim() && settings.libView !== 'list'; }
+
   renderGrid() {
     const G = this.grid;
     if (!G) return;
     G.innerHTML = '';
     const list = this.visibleNotes();
-    if (!list.length) {
+    const stacks = this.showStacks() ? this.folders : [];
+    for (const f of stacks) G.append(this.stackCard(f));
+    if (!list.length && !stacks.length) {
       G.append(h('div', { class: 'empty' },
         h('div', { class: 'empty-art', html: this.view === 'trash' ? icons.trash : icons.pen }),
         h('h2', {}, this.query ? 'No matching notes' : this.view === 'trash' ? 'Nothing here' : this.view === 'fav' ? 'No favorites yet' : 'No notes yet'),
@@ -267,6 +274,143 @@ export class Library {
     for (const n of list) G.append(this.noteCard(n));
   }
 
+  // A folder shown as a pile of its notes. Drop notes on it to move them in.
+  stackCard(f) {
+    const inside = this.notes.filter((n) => n.subjectId === f.id).sort((a, b) => b.updated - a.updated);
+    const layer = (n, i) => h('div', { class: 'stack-layer l' + i },
+      n.kind === 'quick' ? h('div', { class: 'thumb-text' }, (n.text || '').split('\n').slice(0, 8).join('\n'))
+        : n.thumb ? h('img', { src: n.thumb, alt: '', loading: 'lazy' }) : h('div', { class: 'thumb-blank' }));
+    const card = h('div', { class: 'card stack', 'data-folder': f.id },
+      h('button', { class: 'card-open', 'aria-label': 'Open folder ' + f.name, onClick: () => { if (!this.selecting) this.go('folder:' + f.id); } },
+        h('div', { class: 'thumb stack-thumb', style: '--fc:' + f.color },
+          inside.length ? inside.slice(0, 3).reverse().map((n, i, a) => layer(n, a.length - 1 - i))
+            : h('div', { class: 'stack-empty', html: icons.folder }))),
+      h('div', { class: 'card-meta' },
+        h('div', { class: 'card-text' },
+          h('div', { class: 'card-title' }, h('span', { class: 'fdot', style: { background: f.color } }), f.name),
+          h('div', { class: 'card-sub' }, inside.length === 1 ? '1 note' : `${inside.length} notes`)),
+        h('button', { class: 'icon-btn sm card-more', title: 'Folder options', 'aria-label': 'Folder options', html: icons.more, onClick: (e) => { e.stopPropagation(); this.folderMenu(e.currentTarget, f); } })));
+    card.addEventListener('contextmenu', (e) => { e.preventDefault(); this.folderMenu(card, f); });
+    return card;
+  }
+
+  // ---- hold to select, drag onto a folder (or another note) to file it ----
+
+  startSelect(id) {
+    const wasSelecting = this.selecting;
+    this.selecting = true;
+    this.picked.add(id);
+    if (navigator.vibrate) navigator.vibrate(12);
+    if (!this.grid || !this.grid.isConnected || this.view === 'home') { this.view = 'all'; this.renderMainOnly(); return; }
+    // update in place: the card under the finger must stay in the page,
+    // or the browser stops sending its touch moves (no drag)
+    const G = this.grid;
+    G.classList.add('selecting');
+    for (const c of G.querySelectorAll('.card[data-note]')) {
+      const open = c.querySelector('.card-open');
+      if (open && !open.querySelector('.pick-mark')) open.prepend(h('span', { class: 'pick-mark', html: icons.check }));
+      c.classList.toggle('picked', this.picked.has(c.dataset.note));
+    }
+    if (!wasSelecting || !this.pickBar || !this.pickBar.isConnected) {
+      this.pickBar = h('div', { class: 'pick-bar' });
+      this.el.querySelector('.lib-main').append(this.pickBar);
+    }
+    this.renderPickBar();
+  }
+
+  bindHold(card, n) {
+    let t = null, st = null;
+    const cancel = () => { clearTimeout(t); t = null; };
+    card.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || n.trashed) return;
+      st = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      cancel();
+      t = setTimeout(() => {
+        t = 'fired';
+        // the tap that ends the hold must not toggle the (re-drawn) card again
+        this.eatClickUntil = performance.now() + 1500;
+        this.startSelect(n.id);
+        this.drag = { ids: [...this.picked], x0: st.x, y0: st.y, pid: st.id, on: false };
+      }, 420);
+    });
+    card.addEventListener('pointermove', (e) => { if (t && t !== 'fired' && st && Math.hypot(e.clientX - st.x, e.clientY - st.y) > 8) cancel(); });
+    card.addEventListener('pointerup', () => { if (t !== 'fired') cancel(); else t = null; });
+    card.addEventListener('pointercancel', () => { if (t !== 'fired') cancel(); });
+  }
+
+  // window-level drag (cards are re-created while selecting)
+  bindDrag() {
+    if (this.dragBound) return;
+    this.dragBound = true;
+    const target = (x, y) => {
+      if (this.ghost) this.ghost.hidden = true;
+      const el = document.elementFromPoint(x, y);
+      if (this.ghost) this.ghost.hidden = false;
+      if (!el) return null;
+      const f = el.closest('[data-folder]');
+      if (f) return { el: f, folder: f.dataset.folder };
+      const out = el.closest('[data-drop-out]');
+      if (out) return { el: out, folder: null };
+      const c = el.closest('[data-note]');
+      if (c && !this.drag.ids.includes(c.dataset.note)) return { el: c, note: c.dataset.note };
+      return null;
+    };
+    window.addEventListener('pointermove', (e) => {
+      const d = this.drag;
+      if (!d || e.pointerId !== d.pid) return;
+      if (!d.on && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 10) return;
+      if (!d.on) {
+        d.on = true;
+        const first = this.notes.find((n) => n.id === d.ids[0]);
+        this.ghost = h('div', { class: 'drag-ghost' }, h('span', {}, first ? first.title : 'Note'), d.ids.length > 1 ? h('b', {}, String(d.ids.length)) : null);
+        document.body.append(this.ghost);
+        document.body.classList.add('dragging-notes');
+      }
+      this.ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
+      const tg = target(e.clientX, e.clientY);
+      if (d.hover && (!tg || d.hover !== tg.el)) d.hover.classList.remove('drop-on');
+      if (tg) tg.el.classList.add('drop-on');
+      d.hover = tg && tg.el;
+      d.tg = tg;
+    });
+    // keep the page from scrolling while a note is being dragged
+    window.addEventListener('touchmove', (e) => { if (this.drag) e.preventDefault(); }, { passive: false });
+    const end = async (e) => {
+      const d = this.drag;
+      if (!d || e.pointerId !== d.pid) return;
+      this.drag = null;
+      if (this.ghost) { this.ghost.remove(); this.ghost = null; }
+      document.body.classList.remove('dragging-notes');
+      if (d.hover) d.hover.classList.remove('drop-on');
+      if (!d.on || !d.tg || e.type === 'pointercancel') return;
+      if (d.tg.note) await this.stackWith(d.ids, d.tg.note);
+      else await this.moveNotes(d.ids, d.tg.folder);
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    window.addEventListener('click', (e) => {
+      if (this.eatClickUntil && performance.now() < this.eatClickUntil) { e.stopPropagation(); e.preventDefault(); }
+      this.eatClickUntil = 0;
+    }, true);
+  }
+
+  async moveNotes(ids, folderId) {
+    const list = this.notes.filter((n) => ids.includes(n.id));
+    for (const n of list) { n.subjectId = folderId || null; await touchMeta(n); }
+    const f = this.folders.find((x) => x.id === folderId);
+    toast(f ? `Moved ${list.length === 1 ? '1 note' : list.length + ' notes'} to ${f.name}` : 'Moved out of the folder');
+    this.selecting = false; this.picked.clear();
+    await this.refresh();
+  }
+
+  // drop a note on another note: both go into a new folder (like Procreate stacks)
+  async stackWith(ids, otherId) {
+    const f = await this.newFolder('New folder', true);
+    if (!f) return;
+    await this.moveNotes([...ids, otherId], f.id);
+  }
+
+
   renderPickBar() {
     const B = this.pickBar;
     if (!B) return;
@@ -274,14 +418,22 @@ export class Library {
     const ids = [...this.picked], list = this.notes.filter((n) => this.picked.has(n.id));
     const act = (icon, label, fn, cls = '') => h('button', { class: 'pick-act ' + cls, disabled: !ids.length, onClick: fn }, h('span', { html: icons[icon] }), h('small', {}, label));
     const done = () => { this.selecting = false; this.picked.clear(); this.refresh(); };
-    B.append(h('b', { class: 'pick-count' }, ids.length ? `${ids.length} selected` : 'Tap notes to select'),
+    B.append(
+      h('button', { class: 'pick-x', title: 'Done', 'aria-label': 'Done', html: icons.close, onClick: done }),
+      h('b', { class: 'pick-count' }, ids.length ? `${ids.length} selected` : 'Tap notes to select'),
       act('starOn', 'Favorite', async () => { const on = !list.every((n) => n.starred); for (const n of list) { if (on) n.starred = true; else delete n.starred; await touchMeta(n); } done(); }),
       act('folder', 'Move', (e) => menu(e.currentTarget, [
         { label: 'No folder', onClick: async () => { for (const n of list) { n.subjectId = null; await touchMeta(n); } done(); } },
         ...this.folders.map((f) => ({ label: f.name, onClick: async () => { for (const n of list) { n.subjectId = f.id; await touchMeta(n); } done(); } })),
       ])),
+      act('nStack', 'New folder', async () => { const f = await this.newFolder('New folder', true); if (f) await this.moveNotes(ids, f.id); }),
       act('duplicate', 'Duplicate', async () => { for (const n of list) await duplicateNote(n); done(); }),
-      act('trash', 'Delete', async () => { for (const n of list) await trashNote(n); toast(`Moved ${list.length} to Recently Deleted`); done(); }, 'danger'),
+      ids.length === 1 ? act('more', 'More', (e) => this.noteMenu(e.currentTarget, list[0])) : '',
+      act('trash', 'Delete', async () => {
+        for (const n of list) await trashNote(n);
+        toast(list.length === 1 ? 'Deleted · find it in Recently Deleted' : `Deleted ${list.length} notes · find them in Recently Deleted`, 3200);
+        done();
+      }, 'danger'),
       h('button', { class: 'link-btn', onClick: () => { const all = this.visibleNotes(); if (this.picked.size === all.length) this.picked.clear(); else all.forEach((n) => this.picked.add(n.id)); this.renderGrid(); this.renderPickBar(); } }, 'All'));
   }
 
@@ -297,7 +449,7 @@ export class Library {
       }
       trashed ? this.trashMenu(card, n) : this.openNote(n.id);
     };
-    const card = h('div', { class: 'card' + (this.picked.has(n.id) ? ' picked' : '') },
+    const card = h('div', { class: 'card' + (this.picked.has(n.id) ? ' picked' : ''), 'data-note': n.id },
       h('button', { class: 'card-open', onClick: open, 'aria-label': 'Open ' + n.title },
         this.selecting ? h('span', { class: 'pick-mark', html: icons.check }) : null,
         n.kind === 'quick'
@@ -309,12 +461,10 @@ export class Library {
           h('div', { class: 'card-sub' }, trashed ? `Deleted ${timeAgo(n.trashed)}` : fmtDay(n.updated))),
         folder ? h('span', { class: 'fchip', style: '--fc:' + folder.color }, folder.name) : null,
         h('button', { class: 'icon-btn sm card-more', title: 'Note options', 'aria-label': 'Note options', html: icons.more, onClick: (e) => { e.stopPropagation(); trashed ? this.trashMenu(e.currentTarget, n) : this.noteMenu(e.currentTarget, n); } })));
-    let lp;
-    card.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') lp = setTimeout(() => { lp = 'fired'; trashed ? this.trashMenu(card, n) : this.noteMenu(card, n); }, 550); });
-    card.addEventListener('pointerup', () => clearTimeout(lp));
-    card.addEventListener('pointercancel', () => clearTimeout(lp));
-    card.addEventListener('click', (e) => { if (lp === 'fired') { e.stopPropagation(); e.preventDefault(); lp = null; } }, true);
-    card.addEventListener('contextmenu', (e) => { e.preventDefault(); trashed ? this.trashMenu(card, n) : this.noteMenu(card, n); });
+    // hold: select (then tap more notes, or drag them onto a folder) — like Google Keep
+    this.bindHold(card, n);
+    this.bindDrag();
+    card.addEventListener('contextmenu', (e) => { e.preventDefault(); if (e.pointerType === 'touch' || (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents)) return; trashed ? this.trashMenu(card, n) : this.noteMenu(card, n); });
     return card;
   }
 
@@ -476,12 +626,12 @@ export class Library {
     ]);
   }
 
-  async newFolder() {
-    const name = await promptDialog('New folder', '', { placeholder: 'e.g. Biology', ok: 'Create' });
+  async newFolder(value = '', quiet = false) {
+    const name = await promptDialog('New folder', value, { placeholder: 'e.g. Biology', ok: 'Create' });
     if (!name) return null;
     const s = { id: uid(), name, color: FOLDER_COLORS[this.folders.length % FOLDER_COLORS.length], order: Date.now() };
     await saveSubject(s);
-    await this.refresh();
+    if (!quiet) await this.refresh(); else this.folders.push(s);
     return s;
   }
 
